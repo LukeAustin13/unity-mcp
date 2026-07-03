@@ -22,8 +22,9 @@ def test_config_preferred_then_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.delenv("UNITY_MCP_TELEMETRY_ENDPOINT", raising=False)
 
-    # Patch config.telemetry_endpoint via import mocking
-    cfg_mod = importlib.import_module("src.core.config")
+    # Patch config.telemetry_endpoint via import mocking. Telemetry now prefers
+    # the "core.config" module (the same instance main() mutates at runtime).
+    cfg_mod = importlib.import_module("core.config")
     old_endpoint = cfg_mod.config.telemetry_endpoint
     cfg_mod.config.telemetry_endpoint = "https://example.com/telemetry"
     try:

@@ -3,7 +3,7 @@ Configuration settings for the MCP for Unity Server.
 This file contains all configurable parameters for the server.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -41,6 +41,23 @@ class ServerConfig:
     max_heartbeat_frames: int = 16
     heartbeat_timeout: float = 2.0
 
+    # Safety mode: read_only | review_only | write (see core/safety.py)
+    safety_mode: str = "write"
+
+    # Execution-surface guards (enforced by core/enforcement.py). All default to
+    # the safe/off position; a server operator opts in explicitly.
+    #  - allow_execute_code: permit the un-sandboxed execute_code tool at all.
+    #  - allow_arbitrary_menu_items: permit any execute_menu_item path (not just
+    #    the allowlist).
+    #  - menu_item_allowlist: extra menu paths to allow on top of the built-in
+    #    safe defaults (see core/safety.DEFAULT_MENU_ITEM_ALLOWLIST).
+    #  - allow_external_build_output: permit manage_build output paths that are
+    #    absolute/external to the project.
+    allow_execute_code: bool = False
+    allow_arbitrary_menu_items: bool = False
+    menu_item_allowlist: list[str] = field(default_factory=list)
+    allow_external_build_output: bool = False
+
     # Logging settings
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -58,8 +75,11 @@ class ServerConfig:
     port_registry_ttl: float = 5.0
 
     # Telemetry settings
-    telemetry_enabled: bool = True
-    # Align with telemetry.py default Cloud Run endpoint
+    # Fork default: OFF. The upstream project defaults telemetry on to a Coplay
+    # endpoint; this fork does not silently send usage to upstream infrastructure.
+    # Opt in explicitly with UNITY_MCP_TELEMETRY_ENABLED=1 (see core/telemetry.py).
+    telemetry_enabled: bool = False
+    # Endpoint used only when telemetry is explicitly enabled.
     telemetry_endpoint: str = "https://api-prod.coplay.dev/telemetry/events"
 
 

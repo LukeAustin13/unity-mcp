@@ -690,10 +690,14 @@ class TestServerConfigDefaults:
         assert config.port_registry_ttl == 5.0
 
     def test_config_telemetry_defaults(self):
-        """Verify telemetry configuration defaults."""
+        """Verify telemetry configuration defaults.
+
+        Fork policy: telemetry is OFF by default (upstream defaults it on).
+        Opt in with UNITY_MCP_TELEMETRY_ENABLED=1.
+        """
         config = ServerConfig()
 
-        assert config.telemetry_enabled is True
+        assert config.telemetry_enabled is False
         assert config.telemetry_endpoint == "https://api-prod.coplay.dev/telemetry/events"
 
     def test_config_is_dataclass(self):

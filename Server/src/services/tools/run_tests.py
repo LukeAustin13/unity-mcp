@@ -351,3 +351,112 @@ async def get_test_job(
             task.add_done_callback(_background_tasks.discard)
 
     return GetTestJobResponse(**response)
+
+
+@mcp_for_unity_tool(
+    group="testing",
+    description=(
+        "Run Unity tests and return a compact pass/fail summary in ONE call. "
+        "Starts the run, waits server-side up to timeout_seconds, and returns "
+        "counts plus a capped list of failing tests — instead of start + poll + "
+        "poll + parse. If the run is still going when timeout_seconds elapses, "
+        "returns timed_out=true with progress; poll get_test_job for the final "
+        "result. Prefer this over run_tests+get_test_job for the common case."
+    ),
+    annotations=ToolAnnotations(
+        title="Run Tests and Summarize",
+    ),
+)
+async def run_tests_and_summarize(
+    ctx: Context,
+    mode: Annotated[Literal["EditMode", "PlayMode"], "Unity test mode to run"] = "EditMode",
+    test_names: Annotated[list[str] | str, "Full names of specific tests to run"] | None = None,
+    group_names: Annotated[list[str] | str, "Regex-capable test name filters"] | None = None,
+    category_names: Annotated[list[str] | str, "NUnit category names to filter by"] | None = None,
+    assembly_names: Annotated[list[str] | str, "Assembly names to filter tests by"] | None = None,
+    timeout_seconds: Annotated[int, "Max seconds to wait for completion (default 180)"] = 180,
+    max_failures: Annotated[int, "Max failing tests to list (default 20)"] = 20,
+) -> dict[str, Any]:
+    start = await run_tests(
+        ctx,
+        mode=mode,
+        test_names=test_names,
+        group_names=group_names,
+        category_names=category_names,
+        assembly_names=assembly_names,
+        include_failed_tests=True,
+    )
+    if not getattr(start, "success", False):
+        return {
+            "success": False,
+            "error": getattr(start, "error", None) or "run_tests failed to start",
+            "message": getattr(start, "message", None),
+            "hint": getattr(start, "hint", None),
+        }
+
+    start_data = getattr(start, "data", None)
+    job_id = getattr(start_data, "job_id", None) if start_data else None
+    if not job_id:
+        return {"success": False, "error": "run_tests did not return a job_id"}
+
+    wait = max(1, int(timeout_seconds))
+    job = await get_test_job(ctx, job_id, include_failed_tests=True, wait_timeout=wait)
+    if not getattr(job, "success", False):
+        return {
+            "success": False,
+            "error": getattr(job, "error", None) or "get_test_job failed",
+            "job_id": job_id,
+        }
+
+    jd = getattr(job, "data", None)
+    status = getattr(jd, "status", "unknown") if jd else "unknown"
+    completed = status in ("succeeded", "failed", "cancelled")
+    cap = max(0, int(max_failures))
+
+    out: dict[str, Any] = {
+        "success": True,
+        "job_id": job_id,
+        "mode": mode,
+        "status": status,
+        "completed": completed,
+    }
+
+    result = getattr(jd, "result", None) if jd else None
+    result_summary = getattr(result, "summary", None) if result else None
+    if result_summary is not None:
+        out["summary"] = {
+            "total": result_summary.total,
+            "passed": result_summary.passed,
+            "failed": result_summary.failed,
+            "skipped": result_summary.skipped,
+            "duration_seconds": result_summary.durationSeconds,
+            "result_state": result_summary.resultState,
+        }
+        failing = [
+            r for r in (result.results or [])
+            if str(getattr(r, "state", "")).lower().startswith("fail")
+        ]
+        out["failing_tests"] = [
+            {"full_name": r.fullName, "message": (r.message or "").strip()[:500]}
+            for r in failing[:cap]
+        ]
+        out["failing_tests_truncated"] = len(failing) > cap
+        out["all_passed"] = completed and result_summary.failed == 0
+    elif not completed:
+        out["timed_out"] = True
+        out["message"] = (
+            f"Tests still running after {wait}s; poll get_test_job('{job_id}') "
+            "for the final result."
+        )
+        prog = getattr(jd, "progress", None) if jd else None
+        if prog is not None:
+            out["progress"] = {
+                "completed": getattr(prog, "completed", None),
+                "total": getattr(prog, "total", None),
+                "failures_so_far": [
+                    {"full_name": f.full_name, "message": (f.message or "")[:300]}
+                    for f in (getattr(prog, "failures_so_far", None) or [])[:cap]
+                ],
+            }
+
+    return out

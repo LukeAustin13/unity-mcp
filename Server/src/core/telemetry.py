@@ -128,6 +128,7 @@ class TelemetryConfig:
         server_config = None
         for modname in (
             # Prefer plain module to respect test-time overrides and sys.path injection
+            "core.config",
             "src.core.config",
             "config",
             "src.config",
@@ -141,10 +142,13 @@ class TelemetryConfig:
             except Exception:
                 continue
 
-        # Determine enabled flag: config -> env DISABLE_* opt-out
-        cfg_enabled = True if server_config is None else bool(
-            getattr(server_config, "telemetry_enabled", True))
-        self.enabled = cfg_enabled and not self._is_disabled()
+        # Determine enabled flag.
+        # Fork policy: telemetry is OFF unless explicitly enabled. It is enabled
+        # only when config.telemetry_enabled is true OR an explicit opt-in env
+        # var is set, and never when a DISABLE_* opt-out is present.
+        cfg_enabled = False if server_config is None else bool(
+            getattr(server_config, "telemetry_enabled", False))
+        self.enabled = (cfg_enabled or self._is_opted_in()) and not self._is_disabled()
 
         # Telemetry endpoint (Cloud Run default; override via env)
         cfg_default = None if server_config is None else getattr(
@@ -195,6 +199,14 @@ class TelemetryConfig:
             if os.environ.get(var, "").lower() in ("true", "1", "yes", "on"):
                 return True
         return False
+
+    def _is_opted_in(self) -> bool:
+        """Check for an explicit telemetry opt-in via environment variable.
+
+        The fork defaults telemetry off; this is the deliberate opt-in switch.
+        """
+        return os.environ.get("UNITY_MCP_TELEMETRY_ENABLED", "").lower() in (
+            "true", "1", "yes", "on")
 
     def _get_data_directory(self) -> Path:
         """Get directory for storing telemetry data"""

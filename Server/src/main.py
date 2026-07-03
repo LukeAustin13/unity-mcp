@@ -315,10 +315,14 @@ Resources vs Tools:
 - Use TOOLS to perform actions and mutations (manage_editor for play mode control, tag/layer management, etc)
 - Always check related resources before modifying the engine state with tools
 
+Situational awareness (read once, act many):
+- Before a batch of work, read `editor_state` (or the aggregated context) once to learn scene, selection, compile/reload state and readiness, instead of many small queries.
+- Call `safety_status` (or read mcpforunity://server/safety) to see the active safety mode and what you are allowed to do. In read_only only reads run; in review_only reads plus tests/refresh/play/screenshots run; in write everything runs but destructive actions require `confirm: true` acknowledgement metadata. Prefer actions the mode allows rather than discovering the mode from a rejection.
+
 Script Management:
 - After creating or modifying scripts (by your own tools or the `manage_script` tool) use `read_console` to check for compilation errors before proceeding
 - Only after successful compilation can new components/types be used
-- You can poll the `editor_state` resource's `isCompiling` field to check if the domain reload is complete
+- You can poll the `editor_state` resource's `compilation.is_compiling` field to check if the domain reload is complete
 
 Scene Setup:
 - Always include a Camera and main Light (Directional Light) in new scenes
@@ -417,6 +421,35 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
 
                 if not command_type:
                     return JSONResponse({"success": False, "error": "Missing 'type' field"}, status_code=400)
+
+                # Safety enforcement. The /api/command route (used by the CLI)
+                # does NOT pass through the FastMCP middleware chain, so it must
+                # apply the same policy here — otherwise it is a bypass of
+                # read_only/review_only/write and the destructive guards.
+                from core.audit import get_audit_logger
+                from core.enforcement import (
+                    PolicyViolation,
+                    coerce_confirm,
+                    enforce_tool_call,
+                )
+                cli_confirmed = False
+                if isinstance(params, dict) and "confirm" in params:
+                    cli_confirmed = coerce_confirm(params.pop("confirm"))
+                try:
+                    enforce_tool_call(
+                        command_type,
+                        params if isinstance(params, dict) else {},
+                        confirmed=cli_confirmed,
+                        client="api",
+                        source="api",
+                        audit_logger=get_audit_logger(),
+                        audit_allow=True,
+                    )
+                except PolicyViolation as pv:
+                    return JSONResponse(
+                        {"success": False, "error": pv.reason},
+                        status_code=403,
+                    )
 
                 # Get available sessions
                 sessions = await PluginHub.get_sessions()
@@ -606,6 +639,12 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 logger.exception("CLI custom tools error: %s", e)
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
+    # Safety gate first: blocked calls must never trigger instance
+    # discovery or reach Unity (middleware runs in registration order).
+    from transport.safety_middleware import SafetyMiddleware
+    mcp.add_middleware(SafetyMiddleware())
+    logger.info("Registered safety middleware (mode: %s)", config.safety_mode)
+
     # Initialize and register middleware for session-based Unity instance routing
     # Using the singleton getter ensures we use the same instance everywhere
     unity_middleware = get_unity_instance_middleware()
@@ -657,6 +696,14 @@ Environment Variables:
   UNITY_MCP_DEFAULT_INSTANCE   Default Unity instance to target (project name, hash, or 'Name@hash')
   UNITY_MCP_SKIP_STARTUP_CONNECT   Skip initial Unity connection attempt (set to 1/true/yes/on)
   UNITY_MCP_TELEMETRY_ENABLED   Enable telemetry (set to 1/true/yes/on)
+  UNITY_MCP_SAFETY_MODE   Safety mode: read_only, review_only, or write (default: write)
+  UNITY_MCP_AUDIT_LOG   Set to 0/false to disable the tool-call audit log
+  UNITY_MCP_AUDIT_LOG_DIR   Override the audit log directory
+  UNITY_MCP_ALLOW_EXECUTE_CODE   Enable the un-sandboxed execute_code tool (default: off)
+  UNITY_MCP_ALLOW_ARBITRARY_MENU_ITEMS   Allow any execute_menu_item path (default: off)
+  UNITY_MCP_MENU_ITEM_ALLOWLIST   Comma-separated extra menu paths to allow
+  UNITY_MCP_ALLOW_EXTERNAL_BUILD_OUTPUT   Allow build output outside the project (default: off)
+  UNITY_MCP_TELEMETRY_ENABLED   Opt in to telemetry (fork default: disabled)
   UNITY_MCP_TRANSPORT   Transport protocol: stdio or http (default: stdio)
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
   UNITY_MCP_HTTP_HOST   HTTP server host (overrides URL host)
@@ -682,6 +729,16 @@ Examples:
         metavar="INSTANCE",
         help="Default Unity instance to target (project name, hash, or 'Name@hash'). "
              "Overrides UNITY_MCP_DEFAULT_INSTANCE environment variable."
+    )
+    parser.add_argument(
+        "--safety-mode",
+        type=str,
+        choices=["read_only", "review_only", "write"],
+        default=None,
+        help="Safety mode for MCP tool calls: read_only (inspection only), "
+             "review_only (inspection + tests), or write (default; destructive "
+             "actions require confirm=true). "
+             "Overrides UNITY_MCP_SAFETY_MODE environment variable."
     )
     parser.add_argument(
         "--transport",
@@ -798,6 +855,41 @@ Examples:
     config.transport_mode = args.transport or os.environ.get(
         "UNITY_MCP_TRANSPORT", "stdio")
     logger.info(f"Transport mode: {config.transport_mode}")
+
+    # Safety mode: CLI flag wins, then env var, then config default ("write")
+    from core.safety import parse_safety_mode
+    raw_safety_mode = args.safety_mode or os.environ.get(
+        "UNITY_MCP_SAFETY_MODE") or config.safety_mode
+    try:
+        config.safety_mode = parse_safety_mode(raw_safety_mode).value
+    except ValueError as exc:
+        logger.error(str(exc))
+        raise SystemExit(1)
+    logger.info(f"Safety mode: {config.safety_mode}")
+
+    # Execution-surface guards (all default off; opt in via env).
+    def _env_flag(name: str) -> bool:
+        return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+    if _env_flag("UNITY_MCP_ALLOW_EXECUTE_CODE"):
+        config.allow_execute_code = True
+    if _env_flag("UNITY_MCP_ALLOW_ARBITRARY_MENU_ITEMS"):
+        config.allow_arbitrary_menu_items = True
+    if _env_flag("UNITY_MCP_ALLOW_EXTERNAL_BUILD_OUTPUT"):
+        config.allow_external_build_output = True
+    _menu_allow = os.environ.get("UNITY_MCP_MENU_ITEM_ALLOWLIST")
+    if _menu_allow:
+        config.menu_item_allowlist = [
+            item.strip() for item in _menu_allow.split(",") if item.strip()
+        ]
+    if config.allow_execute_code or config.allow_arbitrary_menu_items or config.allow_external_build_output:
+        logger.warning(
+            "Execution-surface guards relaxed: execute_code=%s, arbitrary_menu_items=%s, "
+            "external_build_output=%s",
+            config.allow_execute_code,
+            config.allow_arbitrary_menu_items,
+            config.allow_external_build_output,
+        )
 
     config.http_remote_hosted = (
         bool(args.http_remote_hosted)

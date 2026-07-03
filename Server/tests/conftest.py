@@ -69,6 +69,12 @@ def restore_global_config():
     prior_env = os.environ.get("UNITY_MCP_TRANSPORT")
     prior = {
         "transport_mode": global_config.transport_mode,
+        "safety_mode": global_config.safety_mode,
+        "allow_execute_code": global_config.allow_execute_code,
+        "allow_arbitrary_menu_items": global_config.allow_arbitrary_menu_items,
+        "menu_item_allowlist": list(global_config.menu_item_allowlist),
+        "allow_external_build_output": global_config.allow_external_build_output,
+        "telemetry_enabled": global_config.telemetry_enabled,
         "http_remote_hosted": global_config.http_remote_hosted,
         "api_key_validation_url": global_config.api_key_validation_url,
         "api_key_login_url": global_config.api_key_login_url,
