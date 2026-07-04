@@ -74,6 +74,7 @@ def restore_global_config():
         "allow_arbitrary_menu_items": global_config.allow_arbitrary_menu_items,
         "menu_item_allowlist": list(global_config.menu_item_allowlist),
         "allow_external_build_output": global_config.allow_external_build_output,
+        "allow_insecure_http": global_config.allow_insecure_http,
         "telemetry_enabled": global_config.telemetry_enabled,
         "http_remote_hosted": global_config.http_remote_hosted,
         "api_key_validation_url": global_config.api_key_validation_url,

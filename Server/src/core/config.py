@@ -3,6 +3,7 @@ Configuration settings for the MCP for Unity Server.
 This file contains all configurable parameters for the server.
 """
 
+import ipaddress
 from dataclasses import dataclass, field
 
 
@@ -20,6 +21,11 @@ class ServerConfig:
 
     # HTTP transport behaviour
     http_remote_hosted: bool = False
+
+    # Allow non-remote-hosted HTTP to bind a non-loopback host without auth.
+    # Off by default: exposing an unauthenticated bridge to the network lets
+    # anyone who can reach it control the Unity Editor. See validate_http_bind.
+    allow_insecure_http: bool = False
 
     # API key authentication (required when http_remote_hosted=True)
     api_key_validation_url: str | None = None  # POST endpoint to validate keys
@@ -85,3 +91,51 @@ class ServerConfig:
 
 # Create a global config instance
 config = ServerConfig()
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for hosts that are NOT reachable from the network.
+
+    Parses IP literals (so 127.0.0.0/8 and ::1 are recognised) and treats
+    'localhost' as the only allowed loopback *name*. A non-IP hostname such as
+    '127.evil.example' is NOT loopback — matching it on a string prefix would let
+    DNS/hosts point the "loopback" name at a routable interface. 0.0.0.0 / :: are
+    NOT loopback — they bind every interface, the exact footgun this guards against.
+    """
+    h = (host or "").strip()
+    if h.startswith("[") and h.endswith("]"):  # bracketed IPv6 literal
+        h = h[1:-1]
+    if h.lower().rstrip(".") == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h.rstrip(".")).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_http_bind(
+    *, transport: str, remote_hosted: bool, host: str, allow_insecure: bool
+) -> str | None:
+    """Return an error message if this HTTP bind is unsafe, else None.
+
+    Non-remote-hosted HTTP has no authentication, so it must bind a loopback
+    host. Remote-hosted mode is exempt (it enforces API-key auth). A non-loopback
+    bind is refused unless the operator explicitly opts in via allow_insecure.
+    """
+    if (transport or "").lower() != "http":
+        return None
+    if remote_hosted:
+        return None
+    if is_loopback_host(host):
+        return None
+    if allow_insecure:
+        return None
+    return (
+        f"Refusing to start: HTTP transport is bound to non-loopback host "
+        f"'{host}' with no authentication — anyone who can reach this host:port "
+        "could control the Unity Editor. Fix one of these: bind a loopback host "
+        "(127.0.0.1); run remote-hosted mode with API-key auth "
+        "(--http-remote-hosted --api-key-validation-url ...); or, only on a "
+        "trusted network you control, acknowledge the risk with "
+        "UNITY_MCP_ALLOW_INSECURE_HTTP=1 (or --allow-insecure-http)."
+    )

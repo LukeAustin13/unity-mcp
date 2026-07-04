@@ -45,6 +45,80 @@ def resolve_audit_path(env: dict[str, str] | None = None) -> str:
     return os.path.join(base, AUDIT_FILE_NAME)
 
 
+def read_audit_records(
+    path: str | None = None,
+    limit: int | None = None,
+    env: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read audit records (one JSON object per line). Malformed lines are skipped.
+
+    Returns the last ``limit`` records when given (most recent last).
+    """
+    import collections
+
+    resolved = path or resolve_audit_path(env)
+    if not os.path.exists(resolved):
+        return []
+    # For a bounded tail, keep only the last `limit` lines in memory (the file is
+    # append-only and not rotated, so it can grow large). errors="replace" keeps a
+    # non-text or corrupt file from raising.
+    records: list[dict[str, Any]] = []
+    with open(resolved, encoding="utf-8", errors="replace") as f:
+        line_iter = (
+            collections.deque(f, maxlen=limit) if (limit is not None and limit >= 0) else f
+        )
+        for line in line_iter:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                records.append(obj)
+    return records
+
+
+_BLOCK_DECISIONS = ("block", "confirm_required")
+
+
+def summarize_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate audit records into a compact machine-readable summary."""
+    by_decision: dict[str, int] = {}
+    by_classification: dict[str, int] = {}
+    by_tool: dict[str, int] = {}
+    blocked: list[dict[str, Any]] = []
+
+    for r in records:
+        decision = str(r.get("decision", "unknown"))
+        by_decision[decision] = by_decision.get(decision, 0) + 1
+        cls = str(r.get("classification", "unknown"))
+        by_classification[cls] = by_classification.get(cls, 0) + 1
+        tool = str(r.get("tool", "unknown"))
+        by_tool[tool] = by_tool.get(tool, 0) + 1
+        if decision in _BLOCK_DECISIONS:
+            blocked.append(r)
+
+    return {
+        "total": len(records),
+        "by_decision": by_decision,
+        "by_classification": by_classification,
+        "top_tools": sorted(by_tool.items(), key=lambda kv: -kv[1])[:10],
+        "blocked_count": len(blocked),
+        "recent_blocks": [
+            {
+                "ts": r.get("ts"),
+                "tool": r.get("tool"),
+                "action": r.get("action"),
+                "decision": r.get("decision"),
+                "reason": str(r.get("reason") or "")[:200],
+            }
+            for r in blocked[-10:]
+        ],
+    }
+
+
 def summarize_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
     """Produce a compact, redaction-friendly summary of tool arguments."""
     if not isinstance(arguments, dict):

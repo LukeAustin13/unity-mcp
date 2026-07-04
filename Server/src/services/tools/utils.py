@@ -62,6 +62,61 @@ def parse_json_payload(value: Any) -> Any:
         return value
 
 
+def merge_properties(
+    named: dict[str, Any],
+    properties: Any,
+    allowed_keys: "set[str] | frozenset[str] | tuple[str, ...] | list[str]",
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Merge an optional long-tail *properties* bag into explicit *named* values.
+
+    Lets agents pass a single dict of rarely-used parameters instead of many
+    top-level parameters. This is purely additive: an explicit top-level value
+    always WINS over the same key supplied in the bag.
+
+    Args:
+        named: Mapping of long-tail param name -> its explicit top-level value
+            (``None`` when the caller did not supply it).
+        properties: The bag. Either ``None``, a dict, or a JSON string (parsed
+            via :func:`parse_json_payload`).
+        allowed_keys: The set of keys the bag is permitted to contain. Any other
+            key is rejected.
+
+    Returns:
+        Tuple of ``(merged, error)``. On success ``merged`` is a dict of the
+        named keys with bag values filled in where the explicit value was
+        ``None``, and ``error`` is ``None``. On failure ``merged`` is ``None``
+        and ``error`` is a human-readable message.
+
+        When ``properties`` is ``None`` the returned ``merged`` is a shallow copy
+        of ``named`` unchanged, so callers can use the result unconditionally.
+    """
+    merged = dict(named)
+
+    if properties is None:
+        return merged, None
+
+    parsed = parse_json_payload(properties) if isinstance(properties, str) else properties
+
+    if not isinstance(parsed, dict):
+        return None, (
+            "properties must be a dict or JSON object string, got "
+            f"{type(parsed).__name__}"
+        )
+
+    allowed = set(allowed_keys)
+    for key, value in parsed.items():
+        if key not in allowed:
+            return None, (
+                f"Unknown properties key: '{key}'. Allowed keys: "
+                f"{sorted(allowed)}"
+            )
+        # Explicit top-level value wins over the bag.
+        if merged.get(key) is None:
+            merged[key] = value
+
+    return merged, None
+
+
 def coerce_int(value: Any, default: int | None = None) -> int | None:
     """Attempt to coerce a loosely-typed value to an integer."""
     if value is None:

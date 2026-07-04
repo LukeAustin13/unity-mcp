@@ -16,9 +16,33 @@ from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+from services.tools.utils import merge_properties
 
 
 _VALID_EXTENSIONS = {".uxml", ".uss"}
+
+# Long-tail params accepted inside the optional `properties` bag. These are the
+# rarely-used render_ui and modify_visual_element parameters. An explicit
+# top-level value always wins over the same key in the bag.
+_UI_PROPERTY_KEYS = frozenset({
+    # render_ui
+    "width",
+    "height",
+    "include_image",
+    "max_resolution",
+    "screenshot_file_name",
+    "output_folder",
+    # modify_visual_element
+    "element_name",
+    "text",
+    "add_classes",
+    "remove_classes",
+    "toggle_classes",
+    "style",
+    "enabled",
+    "visible",
+    "tooltip",
+})
 
 
 @mcp_for_unity_tool(
@@ -162,8 +186,57 @@ async def manage_ui(
     tooltip: Annotated[str,
                         "Set element tooltip text. For modify_visual_element."] | None = None,
 
+    properties: Annotated[dict[str, Any] | str,
+                          "Optional bag of rarely-used long-tail params, as a dict or JSON string, "
+                          "so agents can pass them in one place instead of many top-level args. "
+                          "Allowed keys: width, height, include_image, max_resolution, "
+                          "screenshot_file_name, output_folder, element_name, text, add_classes, "
+                          "remove_classes, toggle_classes, style, enabled, visible, tooltip. An "
+                          "explicit top-level value of the same name always wins over the value in "
+                          "this bag."] | None = None,
+
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
+
+    # --- Merge optional long-tail properties bag (explicit top-level wins) ---
+    merged, properties_error = merge_properties(
+        {
+            "width": width,
+            "height": height,
+            "include_image": include_image,
+            "max_resolution": max_resolution,
+            "screenshot_file_name": screenshot_file_name,
+            "output_folder": output_folder,
+            "element_name": element_name,
+            "text": text,
+            "add_classes": add_classes,
+            "remove_classes": remove_classes,
+            "toggle_classes": toggle_classes,
+            "style": style,
+            "enabled": enabled,
+            "visible": visible,
+            "tooltip": tooltip,
+        },
+        properties,
+        _UI_PROPERTY_KEYS,
+    )
+    if properties_error:
+        return {"success": False, "message": properties_error}
+    width = merged["width"]
+    height = merged["height"]
+    include_image = merged["include_image"]
+    max_resolution = merged["max_resolution"]
+    screenshot_file_name = merged["screenshot_file_name"]
+    output_folder = merged["output_folder"]
+    element_name = merged["element_name"]
+    text = merged["text"]
+    add_classes = merged["add_classes"]
+    remove_classes = merged["remove_classes"]
+    toggle_classes = merged["toggle_classes"]
+    style = merged["style"]
+    enabled = merged["enabled"]
+    visible = merged["visible"]
+    tooltip = merged["tooltip"]
 
     action_lower = action.lower()
 

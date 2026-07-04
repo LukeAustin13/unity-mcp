@@ -703,6 +703,7 @@ Environment Variables:
   UNITY_MCP_ALLOW_ARBITRARY_MENU_ITEMS   Allow any execute_menu_item path (default: off)
   UNITY_MCP_MENU_ITEM_ALLOWLIST   Comma-separated extra menu paths to allow
   UNITY_MCP_ALLOW_EXTERNAL_BUILD_OUTPUT   Allow build output outside the project (default: off)
+  UNITY_MCP_ALLOW_INSECURE_HTTP   Allow unauthenticated non-loopback HTTP bind (default: off)
   UNITY_MCP_TELEMETRY_ENABLED   Opt in to telemetry (fork default: disabled)
   UNITY_MCP_TRANSPORT   Transport protocol: stdio or http (default: stdio)
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
@@ -777,6 +778,13 @@ Examples:
         action="store_true",
         help="Treat HTTP transport as remotely hosted (forces explicit Unity instance selection). "
              "Can also set via UNITY_MCP_HTTP_REMOTE_HOSTED=true."
+    )
+    parser.add_argument(
+        "--allow-insecure-http",
+        action="store_true",
+        help="Acknowledge the risk of binding non-remote-hosted HTTP to a non-loopback host "
+             "with no authentication. Off by default; only use on a trusted network. "
+             "Can also set via UNITY_MCP_ALLOW_INSECURE_HTTP=1."
     )
     parser.add_argument(
         "--api-key-validation-url",
@@ -890,6 +898,9 @@ Examples:
             config.allow_arbitrary_menu_items,
             config.allow_external_build_output,
         )
+
+    config.allow_insecure_http = bool(args.allow_insecure_http) or _env_flag(
+        "UNITY_MCP_ALLOW_INSECURE_HTTP")
 
     config.http_remote_hosted = (
         bool(args.http_remote_hosted)
@@ -1014,6 +1025,19 @@ Examples:
         host = args.http_host or os.environ.get(
             "UNITY_MCP_HTTP_HOST") or parsed_url.hostname or "127.0.0.1"
         port = args.http_port or _env_port or parsed_url.port or 8080
+
+        # Safe default: refuse an unauthenticated, network-exposed bind.
+        from core.config import validate_http_bind
+        bind_error = validate_http_bind(
+            transport=config.transport_mode,
+            remote_hosted=config.http_remote_hosted,
+            host=host,
+            allow_insecure=config.allow_insecure_http,
+        )
+        if bind_error:
+            logger.error(bind_error)
+            raise SystemExit(1)
+
         logger.info(f"Starting FastMCP with HTTP transport on {host}:{port}")
         mcp.run(transport=transport, host=host, port=port)
     else:

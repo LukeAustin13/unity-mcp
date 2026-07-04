@@ -7,8 +7,23 @@ from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
-from services.tools.utils import coerce_bool, parse_json_payload, normalize_vector3, normalize_string_list
+from services.tools.utils import coerce_bool, parse_json_payload, normalize_vector3, normalize_string_list, merge_properties
 from services.tools.preflight import preflight
+
+
+# Long-tail params accepted inside the optional `properties` bag. These are the
+# rarely-used, action-specific parameters (duplicate / move_relative / look_at).
+# An explicit top-level value always wins over the same key in the bag.
+_GAMEOBJECT_PROPERTY_KEYS = frozenset({
+    "new_name",
+    "offset",
+    "reference_object",
+    "direction",
+    "distance",
+    "world_space",
+    "look_at_target",
+    "look_at_up",
+})
 
 
 def _normalize_component_properties(value: Any) -> tuple[dict[str, dict[str, Any]] | None, str | None]:
@@ -116,10 +131,42 @@ async def manage_gameobject(
                               "World position [x,y,z] or GameObject name/path/ID to look at (for look_at action)."] | None = None,
     look_at_up: Annotated[list[float] | str,
                           "Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]."] | None = None,
+    properties: Annotated[dict[str, Any] | str,
+                          "Optional bag of rarely-used long-tail params, as a dict or JSON string, "
+                          "so agents can pass them in one place instead of many top-level args. "
+                          "Allowed keys: new_name, offset, reference_object, direction, distance, "
+                          "world_space, look_at_target, look_at_up. An explicit top-level value of "
+                          "the same name always wins over the value in this bag."] | None = None,
 ) -> dict[str, Any]:
     # Get active instance from session state
     # Removed session_state import
     unity_instance = await get_unity_instance_from_context(ctx)
+
+    # --- Merge optional long-tail properties bag (explicit top-level wins) ---
+    merged, properties_error = merge_properties(
+        {
+            "new_name": new_name,
+            "offset": offset,
+            "reference_object": reference_object,
+            "direction": direction,
+            "distance": distance,
+            "world_space": world_space,
+            "look_at_target": look_at_target,
+            "look_at_up": look_at_up,
+        },
+        properties,
+        _GAMEOBJECT_PROPERTY_KEYS,
+    )
+    if properties_error:
+        return {"success": False, "message": properties_error}
+    new_name = merged["new_name"]
+    offset = merged["offset"]
+    reference_object = merged["reference_object"]
+    direction = merged["direction"]
+    distance = merged["distance"]
+    world_space = merged["world_space"]
+    look_at_target = merged["look_at_target"]
+    look_at_up = merged["look_at_up"]
 
     gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
     if gate is not None:

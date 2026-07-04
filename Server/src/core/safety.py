@@ -104,6 +104,12 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
     "get_tool_states": ToolPolicy(ToolClass.READ),
     # Server-side safety-posture reporter (no Unity call).
     "safety_status": ToolPolicy(ToolClass.READ),
+    # Whole-project health/intelligence scans — all actions are read-only.
+    "manage_project": ToolPolicy(ToolClass.READ),
+    # One-read situational-awareness snapshot (no mutation).
+    "get_editor_context": ToolPolicy(ToolClass.READ),
+    # Read-only build pre-flight (inspects settings; produces no artifacts).
+    "validate_build": ToolPolicy(ToolClass.READ),
 
     # --- Composed test flow ---
     "run_tests_and_summarize": ToolPolicy(ToolClass.VALIDATE),

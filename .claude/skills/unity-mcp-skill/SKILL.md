@@ -27,6 +27,38 @@ Before applying a template:
 5. Verify results         → read_console, manage_camera(action="screenshot"), resources
 ```
 
+## Safety Mode Awareness
+
+This fork gates tool calls by a configured **safety mode**. Know the posture before you act, or a call will simply be refused.
+
+**Call `safety_status()` first** (or read `mcpforunity://server/safety`) at the start of a session. It reports the active `mode`, the `allowed_classes`, whether destructive actions need `confirm:true`, and which execution surfaces (`execute_code`, arbitrary menu items, external build output) are enabled — so you can pick actions that will actually run instead of discovering the limit by getting bounced.
+
+Every tool call is classified into one of four action classes:
+
+| Class | Meaning | Examples |
+|-------|---------|----------|
+| **READ** | No project or editor state change | `find_gameobjects`, `manage_project`, `read_console(get)`, `manage_scene(get_hierarchy)`, `safety_status` |
+| **VALIDATE** | Transient editor state only, nothing persisted | `run_tests`, `run_tests_and_summarize`, `refresh_unity`, `manage_editor(play/pause/stop)`, screenshots |
+| **WRITE** | Persistent project/editor mutation (normal editing) | `create_script`, `manage_gameobject(create/modify)`, `manage_scene(create/save)`, `manage_components` |
+| **DESTRUCTIVE** | Deletes data or executes arbitrary code/menu items | `manage_gameobject(delete)`, `delete_script`, `manage_asset(delete)`, `deploy_package`, `execute_code`, arbitrary `execute_menu_item` |
+
+The three modes allow progressively more:
+
+| Mode | Allows |
+|------|--------|
+| `read_only` | READ only |
+| `review_only` | READ + VALIDATE (inspect the project and run tests, but no mutation) |
+| `write` | Everything — but DESTRUCTIVE calls must carry `confirm:true` |
+
+**`confirm:true` is acknowledgement metadata, not human confirmation.** In `write` mode, a destructive call is refused unless its arguments include `"confirm": true`. That flag is a machine acknowledgement that the action destroys data — it is **not** a prompt to a human, and it **never** relaxes the mode. You still need `write` mode; `confirm:true` only satisfies the extra gate that sits on top of destructive actions. In `read_only` or `review_only`, no value of `confirm` makes a write or delete run.
+
+Practical consequences:
+- In `read_only`, plan around reads only — asset scans (`manage_project`), console reads, `find_gameobjects`, resources. A VALIDATE like `run_tests_and_summarize` will be refused.
+- In `review_only`, you can additionally run tests, refresh, enter/exit play mode, and take screenshots — but not create, modify, save, or delete.
+- In `write`, everything is available; remember to add `confirm:true` to deletes and other destructive actions, and note that `execute_code` and arbitrary (non-allowlisted) menu items may still be disabled by their own config flags even in `write` mode (`safety_status` reports these as `execute_code_enabled` / `arbitrary_menu_items_enabled`).
+
+When a call is refused for safety reasons, do not retry blindly — read `safety_status`, see which class you tripped, and either switch to an allowed action or report that the current mode does not permit it.
+
 ## Critical Best Practices
 
 ### 1. After Writing/Editing Scripts: Wait for Compilation and Check Console

@@ -64,6 +64,29 @@ def run_build(target, output_path, development, scripting_backend, subtarget, pr
             print_info(f"Build started. Poll with: unity-mcp build status {job_id}")
 
 
+@build.command("validate")
+@click.option("--target", "-t", help="Build target to validate: windows64, osx, linux64, android, ios, webgl. Omit for the active target.")
+@handle_unity_errors
+def validate(target: Optional[str]):
+    """Read-only build pre-flight — would a build succeed? Produces no artifacts.
+
+    \b
+    Checks: target resolves, build support installed, scenes exist on disk,
+    scripts compile, and PlayerSettings are non-empty.
+
+    \b
+    Examples:
+        unity-mcp build validate
+        unity-mcp build validate --target android
+    """
+    config = get_config()
+    params = {}
+    if target:
+        params["target"] = target
+    result = run_command("validate_build", params, config)
+    click.echo(format_output(result, config.format))
+
+
 @build.command("status")
 @click.argument("job_id", required=False)
 @handle_unity_errors
