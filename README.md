@@ -43,7 +43,7 @@ Full history: [Release Notes](https://coplaydev.github.io/unity-mcp/releases).
 
 This is a **hardened fork** of [MCP for Unity](https://github.com/CoplayDev/unity-mcp) by CoplayDev, used under the MIT License. The original copyright notice is preserved verbatim in [`LICENSE`](LICENSE). **This fork is not affiliated with or endorsed by CoplayDev or Unity Technologies.**
 
-It exists to make AI-agent access to the Unity Editor **safe to run on real projects**. Letting an assistant delete assets, run builds, install packages, and execute code is a security-sensitive automation surface — a prompt-injected or misaligned agent can do real damage. This fork adds server-side guardrails on top of the upstream bridge without breaking MCP compatibility. See the full audit in [`docs/FABLE_UNITY_MCP_FORK_REVIEW.md`](docs/FABLE_UNITY_MCP_FORK_REVIEW.md).
+It exists to make AI-agent access to the Unity Editor **safe to run on real projects**. Letting an assistant delete assets, run builds, install packages, and execute code is a security-sensitive automation surface — a prompt-injected or misaligned agent can do real damage. This fork adds server-side guardrails on top of the upstream bridge without breaking MCP compatibility. See the full audit in [`docs/FORK_HARDENING_REVIEW.md`](docs/FORK_HARDENING_REVIEW.md).
 
 It stays **platform-neutral**: PC, mobile, prototype, tool, and release-build workflows are all first-class. Android and other targets are options, not the identity of the project.
 

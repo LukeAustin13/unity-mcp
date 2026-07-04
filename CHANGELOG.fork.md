@@ -1,6 +1,6 @@
 # Fork Changelog
 
-Changes made in this **hardened fork** of [MCP for Unity](https://github.com/CoplayDev/unity-mcp), on top of the upstream release it was branched from. Upstream release notes remain authoritative for upstream features; this file records only the fork's additions. Full detail and rationale: [`docs/FABLE_UNITY_MCP_FORK_REVIEW.md`](docs/FABLE_UNITY_MCP_FORK_REVIEW.md).
+Changes made in this **hardened fork** of [MCP for Unity](https://github.com/CoplayDev/unity-mcp), on top of the upstream release it was branched from. Upstream release notes remain authoritative for upstream features; this file records only the fork's additions. Full detail and rationale: [`docs/FORK_HARDENING_REVIEW.md`](docs/FORK_HARDENING_REVIEW.md).
 
 ## Unreleased (fork)
 
@@ -31,7 +31,7 @@ Changes made in this **hardened fork** of [MCP for Unity](https://github.com/Cop
 ### Skills & docs
 
 - New Claude Code skills: `unity-health-check` (read-only project pulse) and a generic `unity-scene-setup`; a Safety Mode Awareness section added to the shipped `unity-mcp-skill` (and its dangling reference links repaired).
-- `SECURITY.md` fork safety section; `docs/FABLE_UNITY_MCP_FORK_REVIEW.md` end-to-end review.
+- `SECURITY.md` fork safety section; `docs/FORK_HARDENING_REVIEW.md` end-to-end review.
 
 > **C# verification:** the new C# handlers (`ManageProject`, `EditorContext`, `ValidateBuild`) are review-clean but require running the EditMode tests in Unity (`Window → General → Test Runner`) to confirm compilation on your Editor version. The Python layer is fully unit-tested.
 

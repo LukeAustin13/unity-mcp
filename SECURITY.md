@@ -1,6 +1,6 @@
 # Security Policy
 
-> This is a **hardened fork** of MCP for Unity. Giving an AI assistant control of the Unity Editor is a security-sensitive automation surface — a prompt-injected agent (acting on malicious text in a project file, asset label, or console message) can do real damage. The section below documents the fork's safety controls; the full audit is in [`docs/FABLE_UNITY_MCP_FORK_REVIEW.md`](docs/FABLE_UNITY_MCP_FORK_REVIEW.md).
+> This is a **hardened fork** of MCP for Unity. Giving an AI assistant control of the Unity Editor is a security-sensitive automation surface — a prompt-injected agent (acting on malicious text in a project file, asset label, or console message) can do real damage. The section below documents the fork's safety controls; the full audit is in [`docs/FORK_HARDENING_REVIEW.md`](docs/FORK_HARDENING_REVIEW.md).
 
 ## Fork safety model (run it safely)
 

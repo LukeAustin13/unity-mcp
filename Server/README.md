@@ -159,9 +159,10 @@ API key authentication (remote-hosted mode):
 - `UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER` - Header name for server-to-auth-service authentication
 - `UNITY_MCP_API_KEY_SERVICE_TOKEN` - Token value sent to the auth service for server authentication
 
-Telemetry:
+Telemetry (this fork ships with telemetry **off by default** — opt in to enable):
 
-- `DISABLE_TELEMETRY=1` - Disable anonymous telemetry (opt-out)
+- `UNITY_MCP_TELEMETRY_ENABLED=1` - Enable anonymous telemetry (off by default in this fork)
+- `DISABLE_TELEMETRY=1` - Force-disable telemetry (opt-out; takes precedence over any opt-in)
 - `UNITY_MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
 - `MCP_DISABLE_TELEMETRY=1` - Same as `DISABLE_TELEMETRY`
 - `UNITY_MCP_TELEMETRY_ENDPOINT` - Override telemetry endpoint URL
@@ -233,7 +234,7 @@ When deploying the server as a shared remote service (e.g. for a team or Asset S
 }
 ```
 
-For full details, see [Remote Server Auth Guide](../docs/guides/REMOTE_SERVER_AUTH.md) and [Architecture Reference](../docs/reference/REMOTE_SERVER_AUTH_ARCHITECTURE.md).
+For full details, see the [Remote Server Auth guide](https://coplaydev.github.io/unity-mcp/guides/remote-server-auth) and the [Remote Auth architecture reference](https://coplaydev.github.io/unity-mcp/architecture/remote-auth).
 
 ---
 

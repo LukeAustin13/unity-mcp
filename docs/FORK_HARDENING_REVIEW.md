@@ -463,7 +463,6 @@ The pass also flagged one latent (not-yet-exploitable) item that was fixed proac
 4. **Classification is a maintained table** — a new destructive action added to an existing CRUD tool defaults to that tool's default class (WRITE), not DESTRUCTIVE, until listed. `TestPolicyTableIntegrity` guards the known-dangerous tools; extend it as tools evolve. A CI check asserting Python `ALL_ACTIONS` ⊇ C# accepted actions would also unlock the `action` → `Literal` migration.
 5. **Defense-in-depth is Python-only** — all enforcement is server-side. Mirroring the most dangerous checks (delete, build output path, menu allowlist) on the C# side would protect against a future non-Python ingress and against `ToolParams` key-resolution drift. Not required today (all ingress is Python, and argument keys are now canonicalised so a guard cannot diverge from what C# resolves).
 6. **Dual-mode-action classification is per-tool** — `manage_build` and `manage_scene` needed payload-aware classifiers because one action string covers both a read and a mutating sub-mode. A CI check that flags any `ToolPolicy` READ/VALIDATE action whose C# handler has a write branch would catch a future sibling automatically; today `TestPolicyTableIntegrity` plus the adversarial-review regression tests are the guard.
-5. **Guards live in Python** — enforcement is server-side. A defence-in-depth mirror of the most dangerous checks (delete/build/menu) on the C# side would protect against a future non-Python ingress. Not required today (all ingress is Python), but worth noting.
 
 ---
 
