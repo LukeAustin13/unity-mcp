@@ -1,5 +1,6 @@
 """Scene CLI commands."""
 
+import json
 import sys
 
 import click
@@ -348,5 +349,73 @@ def validate(repair: bool):
             print_success(f"Found {total} issue(s), repaired {repaired}")
         else:
             print_warning(f"Found {total} issue(s), none repaired")
+
+
+@scene.command("validate-contracts")
+@click.option(
+    "--contract-path",
+    default=None,
+    help="Project-relative path to a .json contract file (read Unity-side)."
+)
+@click.option(
+    "--contract",
+    default=None,
+    help="Inline contract as a JSON object string."
+)
+@click.option(
+    "--scene", "scene_name",
+    default=None,
+    help="Name of a LOADED scene to validate (default: the active scene)."
+)
+@handle_unity_errors
+def validate_contracts(contract_path: Optional[str], contract: Optional[str], scene_name: Optional[str]):
+    """Validate a loaded scene against a project-defined JSON contract (read-only).
+
+    Provide exactly one of --contract-path or --contract. The scene must already
+    be open; this command never opens one.
+
+    \b
+    Examples:
+        unity-mcp scene validate-contracts --contract-path "Assets/Contracts/main.json"
+        unity-mcp scene validate-contracts --contract '{"required_objects": ["Player"]}'
+        unity-mcp scene validate-contracts --contract-path "c.json" --scene "Level2"
+    """
+    config = get_config()
+
+    has_path = bool(contract_path and contract_path.strip())
+    has_inline = bool(contract and contract.strip())
+    if has_path and has_inline:
+        print_error("Provide exactly one of --contract-path or --contract, not both.")
+        sys.exit(1)
+    if not has_path and not has_inline:
+        print_error("A contract is required. Provide --contract-path or --contract.")
+        sys.exit(1)
+
+    params: dict[str, Any] = {}
+    if has_inline:
+        try:
+            parsed = json.loads(contract)
+        except (ValueError, TypeError) as exc:
+            print_error(f"--contract is not valid JSON: {exc}")
+            sys.exit(1)
+        if not isinstance(parsed, dict):
+            print_error("--contract must be a JSON object.")
+            sys.exit(1)
+        params["contract"] = parsed
+    else:
+        params["contract_path"] = contract_path.strip()
+
+    if scene_name and scene_name.strip():
+        params["scene"] = scene_name.strip()
+
+    result = run_command("validate_scene_contracts", params, config)
+    click.echo(format_output(result, config.format))
+    if result.get("success"):
+        data = result.get("data", {})
+        if data.get("passed"):
+            print_success("Scene satisfies the contract")
+        else:
+            failed = data.get("summary", {}).get("failed", 0)
+            print_warning(f"Contract violated: {failed} check(s) failed")
 
 

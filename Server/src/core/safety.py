@@ -108,8 +108,14 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
     "manage_project": ToolPolicy(ToolClass.READ),
     # One-read situational-awareness snapshot (no mutation).
     "get_editor_context": ToolPolicy(ToolClass.READ),
+    # Filter+projection query over loaded scenes (traverses in-memory objects; no mutation).
+    "query_scene": ToolPolicy(ToolClass.READ),
+    # Analytic uGUI layout audit across a resolution matrix (pure math; mutates nothing).
+    "audit_ui_layout": ToolPolicy(ToolClass.READ),
     # Read-only build pre-flight (inspects settings; produces no artifacts).
     "validate_build": ToolPolicy(ToolClass.READ),
+    # Read-only scene-contract validator (traverses a loaded scene; opens/mutates nothing).
+    "validate_scene_contracts": ToolPolicy(ToolClass.READ),
 
     # --- Composed test flow ---
     "run_tests_and_summarize": ToolPolicy(ToolClass.VALIDATE),
@@ -120,6 +126,9 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
 
     # --- Validation / transient editor state ---
     "run_tests": ToolPolicy(ToolClass.VALIDATE),
+    # Enters play mode, runs the project, then exits — like run_tests it executes
+    # project code but mutates nothing persistent (play exit restores scene state).
+    "play_smoke_test": ToolPolicy(ToolClass.VALIDATE),
     "refresh_unity": ToolPolicy(ToolClass.VALIDATE),
     "manage_profiler": ToolPolicy(ToolClass.VALIDATE, {
         "ping": ToolClass.READ,
@@ -226,13 +235,21 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         # scene has none (EnsureLightingSettings), so it can mutate → WRITE.
         "bake_get_settings": ToolClass.WRITE,
     }),
+    # NOTE: manage_camera is dispatched through _classify_manage_camera (a
+    # payload-aware branch in classify_call), so the capture/analysis actions are
+    # classified there. This flat table still supplies the READ overrides and the
+    # WRITE default for the configuration actions.
     "manage_camera": ToolPolicy(ToolClass.WRITE, {
         "ping": ToolClass.READ,
         "get_brain_status": ToolClass.READ,
         "list_cameras": ToolClass.READ,
-        # Screenshots create new image files but never damage existing state.
+        # visibility_report is a zero-pixel read; classified in _classify_manage_camera.
+        "visibility_report": ToolClass.READ,
+        # Screenshots (incl. screenshot_compare) create new image files but never
+        # damage existing state → VALIDATE (see _classify_manage_camera).
         "screenshot": ToolClass.VALIDATE,
         "screenshot_multiview": ToolClass.VALIDATE,
+        "screenshot_compare": ToolClass.VALIDATE,
     }),
     "manage_ui": ToolPolicy(ToolClass.WRITE, {
         "ping": ToolClass.READ,
@@ -362,11 +379,17 @@ def classify_call(tool_name: str, arguments: dict[str, Any] | None) -> Classific
     if tool_name == "manage_build":
         return _classify_manage_build(args)
 
+    if tool_name == "manage_camera":
+        return _classify_manage_camera(args)
+
     if tool_name == "manage_scene":
         return _classify_manage_scene(args)
 
     if tool_name == "manage_prefabs":
         return _classify_manage_prefabs(args)
+
+    if tool_name == "manage_checkpoint":
+        return _classify_manage_checkpoint(args)
 
     policy = TOOL_POLICIES.get(tool_name)
     action = args.get("action")
@@ -409,6 +432,69 @@ def _classify_manage_build(args: dict[str, Any]) -> Classification:
         # cancel, unknown actions, or missing action: default to WRITE.
         cls = ToolClass.WRITE
     return Classification(cls, action, known_tool=True)
+
+
+def _classify_manage_checkpoint(args: dict[str, Any]) -> Classification:
+    """Payload-aware classification for manage_checkpoint.
+
+    Each action has a distinct severity: listing reads manifests (READ), creating
+    writes snapshot copies under Library/ (VALIDATE), deleting removes a checkpoint
+    directory (WRITE), and restoring OVERWRITES the original scene files on disk and
+    discards unsaved changes (DESTRUCTIVE). An unknown/missing action fails closed to
+    DESTRUCTIVE so a new or malformed action can never slip past the gate.
+    """
+    action = action_of(args)
+    if action == "list":
+        cls = ToolClass.READ
+    elif action == "create":
+        cls = ToolClass.VALIDATE
+    elif action == "delete":
+        cls = ToolClass.WRITE
+    elif action == "restore":
+        cls = ToolClass.DESTRUCTIVE
+    else:
+        # unknown or missing action: fail closed.
+        cls = ToolClass.DESTRUCTIVE
+    return Classification(cls, action, known_tool=True)
+
+
+def _classify_manage_camera(args: dict[str, Any]) -> Classification:
+    """Payload-aware classification for manage_camera.
+
+    The visual-audit tier splits the tool by severity:
+      - visibility_report enumerates renderers and returns geometry only — a pure
+        READ (no artifact, no state change).
+      - screenshot / screenshot_multiview / screenshot_compare each capture a frame
+        and write an artifact file (a screenshot, and for compare an optional diff
+        PNG). Nothing persistent in the project is modified or deleted → VALIDATE.
+      - Every other known action keeps the tool's flat class from TOOL_POLICIES
+        (READ for ping/get_brain_status/list_cameras, WRITE otherwise).
+      - Unknown or missing action fails closed to the most dangerous class this
+        tool can reach — WRITE (manage_camera has no destructive action).
+    """
+    action = action_of(args)
+    if action == "visibility_report":
+        return Classification(ToolClass.READ, action, known_tool=True)
+    if action in ("screenshot", "screenshot_multiview", "screenshot_compare"):
+        return Classification(ToolClass.VALIDATE, action, known_tool=True)
+    policy = TOOL_POLICIES["manage_camera"]
+    if action and action in policy.actions:
+        return Classification(policy.actions[action], action, known_tool=True)
+    if action and action in _MANAGE_CAMERA_KNOWN_ACTIONS:
+        return Classification(policy.default, action, known_tool=True)
+    # Unknown or missing action: fail closed to the tool's most dangerous class.
+    return Classification(ToolClass.WRITE, action, known_tool=True)
+
+
+# Non-capture, non-analysis actions the tool accepts. Used so an UNKNOWN action
+# still fails closed to WRITE rather than being treated as a known default.
+_MANAGE_CAMERA_KNOWN_ACTIONS = frozenset({
+    "ping", "ensure_brain", "get_brain_status",
+    "create_camera",
+    "set_target", "set_priority", "set_lens", "set_body", "set_aim", "set_noise",
+    "add_extension", "remove_extension",
+    "set_blend", "force_camera", "release_override", "list_cameras",
+})
 
 
 def _classify_manage_scene(args: dict[str, Any]) -> Classification:

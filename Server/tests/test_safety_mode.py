@@ -759,6 +759,55 @@ class TestManageBuildDualMode:
         assert evaluate_call(SafetyMode.READ_ONLY, "manage_build", {"action": "settings", "property": "version"}).decision is Decision.ALLOW
 
 
+class TestManageCameraVisualAudit:
+    """manage_camera is payload-aware: the visual-audit tier splits by severity,
+    and unknown/missing actions must fail closed."""
+
+    def test_visibility_report_is_read(self):
+        assert classify_call("manage_camera", {"action": "visibility_report"}).tool_class is ToolClass.READ
+
+    def test_screenshot_is_validate(self):
+        assert classify_call("manage_camera", {"action": "screenshot"}).tool_class is ToolClass.VALIDATE
+
+    def test_screenshot_multiview_is_validate(self):
+        assert classify_call("manage_camera", {"action": "screenshot_multiview"}).tool_class is ToolClass.VALIDATE
+
+    def test_screenshot_compare_is_validate(self):
+        assert classify_call("manage_camera", {"action": "screenshot_compare"}).tool_class is ToolClass.VALIDATE
+
+    def test_pure_read_actions_are_read(self):
+        for action in ("ping", "get_brain_status", "list_cameras"):
+            assert classify_call("manage_camera", {"action": action}).tool_class is ToolClass.READ, action
+
+    def test_configuration_actions_are_write(self):
+        for action in ("create_camera", "set_target", "set_lens", "set_body",
+                       "add_extension", "force_camera", "release_override"):
+            assert classify_call("manage_camera", {"action": action}).tool_class is ToolClass.WRITE, action
+
+    def test_unknown_action_fails_closed_to_write(self):
+        # A never-seen action must not be treated as the (READ) pure-read default.
+        assert classify_call("manage_camera", {"action": "brand_new_action"}).tool_class is ToolClass.WRITE
+
+    def test_missing_action_fails_closed_to_write(self):
+        assert classify_call("manage_camera", {}).tool_class is ToolClass.WRITE
+        assert classify_call("manage_camera", None).tool_class is ToolClass.WRITE
+
+    def test_action_case_and_whitespace_normalized(self):
+        assert classify_call("manage_camera", {"action": " Visibility_Report "}).tool_class is ToolClass.READ
+        assert classify_call("manage_camera", {"action": "SCREENSHOT_COMPARE"}).tool_class is ToolClass.VALIDATE
+
+    def test_review_only_allows_capture_and_visibility(self):
+        for action in ("visibility_report", "screenshot", "screenshot_compare"):
+            assert evaluate_call(SafetyMode.REVIEW_ONLY, "manage_camera", {"action": action}).decision is Decision.ALLOW, action
+
+    def test_read_only_allows_visibility_but_blocks_capture(self):
+        assert evaluate_call(SafetyMode.READ_ONLY, "manage_camera", {"action": "visibility_report"}).decision is Decision.ALLOW
+        assert evaluate_call(SafetyMode.READ_ONLY, "manage_camera", {"action": "screenshot_compare"}).decision is Decision.BLOCK
+
+    def test_read_only_blocks_configuration(self):
+        assert evaluate_call(SafetyMode.READ_ONLY, "manage_camera", {"action": "create_camera"}).decision is Decision.BLOCK
+
+
 class TestMenuKeyPrecedence:
     """Finding #6: every provided menu-path spelling must be allowlisted."""
 

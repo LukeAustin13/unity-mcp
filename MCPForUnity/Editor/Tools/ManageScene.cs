@@ -32,6 +32,12 @@ namespace MCPForUnity.Editor.Tools
             public string captureSource { get; set; }   // "game_view" (default) or "scene_view"
             public bool? includeImage { get; set; }
             public int? maxResolution { get; set; }
+            // Inline-image right-sizing (affects ONLY the base64 payload, never the disk file).
+            public int? maxWidth { get; set; }           // width cap for the inline image (aspect preserved)
+            public string imageFormat { get; set; }      // "png" (default) or "jpg"
+            public int? jpgQuality { get; set; }         // 1-100 when imageFormat=="jpg" (default 80)
+            public string cropTarget { get; set; }       // GameObject name/path; crop inline image to its screen bounds
+            public int? cropPaddingPx { get; set; }      // padding around cropTarget's screen rect (default 32)
             public string outputFolder { get; set; }    // optional override; null falls back to user pref / Assets/Screenshots
             public string batch { get; set; }           // "surround" or "orbit" for multi-angle batch capture
             public JToken viewTarget { get; set; }       // GO reference or [x,y,z] to focus on before capture
@@ -110,6 +116,11 @@ namespace MCPForUnity.Editor.Tools
                 captureSource = toolParams.Get("capture_source"),
                 includeImage = ParamCoercion.CoerceBoolNullable(p["includeImage"] ?? p["include_image"]),
                 maxResolution = ParamCoercion.CoerceIntNullable(p["maxResolution"] ?? p["max_resolution"]),
+                maxWidth = ParamCoercion.CoerceIntNullable(p["maxWidth"] ?? p["max_width"]),
+                imageFormat = (p["imageFormat"] ?? p["image_format"])?.ToString(),
+                jpgQuality = ParamCoercion.CoerceIntNullable(p["jpgQuality"] ?? p["jpg_quality"]),
+                cropTarget = (p["cropTarget"] ?? p["crop_target"])?.ToString(),
+                cropPaddingPx = ParamCoercion.CoerceIntNullable(p["cropPaddingPx"] ?? p["crop_padding_px"]),
                 outputFolder = (p["outputFolder"] ?? p["output_folder"])?.ToString(),
                 batch = (p["batch"])?.ToString(),
                 viewTarget = p["viewTarget"] ?? p["view_target"],
@@ -599,10 +610,15 @@ namespace MCPForUnity.Editor.Tools
                     if (!Application.isBatchMode) EnsureGameView();
 
                     string folderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
+                    InlineImageOptions? inlineOptions = includeImage
+                        ? BuildInlineOptions(cmd, targetCamera,
+                            Mathf.Max(1, targetCamera.pixelWidth) * resolvedSuperSize,
+                            Mathf.Max(1, targetCamera.pixelHeight) * resolvedSuperSize)
+                        : null;
                     ScreenshotCaptureResult result = ScreenshotUtility.CaptureFromCameraToProjectFolder(
                         targetCamera, fileName, resolvedSuperSize, ensureUniqueFileName: true,
                         includeImage: includeImage, maxResolution: maxResolution,
-                        folderOverride: folderOverride);
+                        folderOverride: folderOverride, inlineOptions: inlineOptions);
 
                     if (ScreenshotUtility.IsUnderAssets(result.ProjectRelativePath))
                         AssetDatabase.ImportAsset(result.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
@@ -615,10 +631,15 @@ namespace MCPForUnity.Editor.Tools
                     if (!Application.isBatchMode) EnsureGameView();
 
                     string folderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
+                    // Composited capture is full-frame; crop_target needs a camera projection,
+                    // so pass Camera.main for crop resolution when one exists.
+                    InlineImageOptions? inlineOptions = BuildInlineOptions(cmd, Camera.main,
+                        Mathf.Max(1, Screen.width) * resolvedSuperSize,
+                        Mathf.Max(1, Screen.height) * resolvedSuperSize);
                     ScreenshotCaptureResult result = ScreenshotUtility.CaptureComposited(
                         fileName, resolvedSuperSize, ensureUniqueFileName: true,
                         includeImage: true, maxResolution: maxResolution,
-                        folderOverride: folderOverride);
+                        folderOverride: folderOverride, inlineOptions: inlineOptions);
 
                     if (ScreenshotUtility.IsUnderAssets(result.ProjectRelativePath))
                         AssetDatabase.ImportAsset(result.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
@@ -644,13 +665,16 @@ namespace MCPForUnity.Editor.Tools
                     if (!Application.isBatchMode) EnsureGameView();
 
                     string folderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
+                    InlineImageOptions? inlineOptions = BuildInlineOptions(cmd, targetCamera,
+                        Mathf.Max(1, targetCamera.pixelWidth) * resolvedSuperSize,
+                        Mathf.Max(1, targetCamera.pixelHeight) * resolvedSuperSize);
                     ScreenshotCaptureResult result;
                     try
                     {
                         result = ScreenshotUtility.CaptureFromCameraToProjectFolder(
                             targetCamera, fileName, resolvedSuperSize, ensureUniqueFileName: true,
                             includeImage: includeImage, maxResolution: maxResolution,
-                            folderOverride: folderOverride);
+                            folderOverride: folderOverride, inlineOptions: inlineOptions);
                     }
                     catch (InvalidOperationException ex)
                     {
@@ -751,9 +775,99 @@ namespace MCPForUnity.Editor.Tools
                 data["imageBase64"] = result.ImageBase64;
                 data["imageWidth"] = result.ImageWidth;
                 data["imageHeight"] = result.ImageHeight;
+                data["imageFormat"] = result.ImageFormat;
             }
 
             return data;
+        }
+
+        /// <summary>
+        /// Builds the inline-image right-sizing options from the command, resolving a
+        /// crop rect from crop_target's renderer bounds projected onto the capturing
+        /// camera. Returns null when no right-sizing is requested (legacy path).
+        /// </summary>
+        private static InlineImageOptions? BuildInlineOptions(SceneCommand cmd, Camera camera, int renderWidth, int renderHeight)
+        {
+            bool useJpg = !string.IsNullOrEmpty(cmd.imageFormat) &&
+                          (cmd.imageFormat.Trim().ToLowerInvariant() == "jpg" ||
+                           cmd.imageFormat.Trim().ToLowerInvariant() == "jpeg");
+            int maxWidth = cmd.maxWidth ?? 0;
+            RectInt? crop = null;
+
+            if (!string.IsNullOrEmpty(cmd.cropTarget) && camera != null)
+            {
+                crop = ComputeCropRect(cmd.cropTarget, camera, renderWidth, renderHeight, cmd.cropPaddingPx ?? 32);
+            }
+
+            // No right-sizing requested at all → legacy path (return null).
+            if (maxWidth <= 0 && !useJpg && !crop.HasValue)
+                return null;
+
+            return new InlineImageOptions(maxWidth, crop, useJpg, cmd.jpgQuality ?? 80);
+        }
+
+        /// <summary>
+        /// Projects a GameObject's renderer bounds onto the camera and returns the
+        /// screen-space pixel rect (bottom-left origin) padded by paddingPx and clamped
+        /// to the render frame. Returns null when the object has no renderer bounds or
+        /// projects entirely off-frame.
+        /// </summary>
+        private static RectInt? ComputeCropRect(string targetRef, Camera camera, int width, int height, int paddingPx)
+        {
+            GameObject go = GameObjectLookup.FindByTarget(new JValue(targetRef), "by_name", true);
+            if (go == null) return null;
+
+            if (!TryGetWorldBounds(go, out Bounds bounds)) return null;
+
+            // Project the 8 bounds corners to viewport space and take the AABB.
+            float minX = float.MaxValue, minY = float.MaxValue;
+            float maxX = float.MinValue, maxY = float.MinValue;
+            bool anyInFront = false;
+            Vector3 c = bounds.center, e = bounds.extents;
+            for (int i = 0; i < 8; i++)
+            {
+                var corner = new Vector3(
+                    c.x + ((i & 1) == 0 ? -e.x : e.x),
+                    c.y + ((i & 2) == 0 ? -e.y : e.y),
+                    c.z + ((i & 4) == 0 ? -e.z : e.z));
+                Vector3 vp = camera.WorldToViewportPoint(corner);
+                if (vp.z > 0f) anyInFront = true;
+                minX = Mathf.Min(minX, vp.x);
+                minY = Mathf.Min(minY, vp.y);
+                maxX = Mathf.Max(maxX, vp.x);
+                maxY = Mathf.Max(maxY, vp.y);
+            }
+            if (!anyInFront) return null;
+
+            int px0 = Mathf.RoundToInt(Mathf.Clamp01(minX) * width);
+            int py0 = Mathf.RoundToInt(Mathf.Clamp01(minY) * height);
+            int px1 = Mathf.RoundToInt(Mathf.Clamp01(maxX) * width);
+            int py1 = Mathf.RoundToInt(Mathf.Clamp01(maxY) * height);
+
+            int x = Mathf.Clamp(px0 - paddingPx, 0, width);
+            int y = Mathf.Clamp(py0 - paddingPx, 0, height);
+            int w = Mathf.Clamp((px1 + paddingPx) - x, 0, width - x);
+            int h = Mathf.Clamp((py1 + paddingPx) - y, 0, height - y);
+            if (w <= 0 || h <= 0) return null;
+            return new RectInt(x, y, w, h);
+        }
+
+        /// <summary>
+        /// Combined world-space bounds of every Renderer under a GameObject. Returns
+        /// false when the object (and its children) have no renderers.
+        /// </summary>
+        private static bool TryGetWorldBounds(GameObject go, out Bounds bounds)
+        {
+            bounds = default;
+            var renderers = go.GetComponentsInChildren<Renderer>(includeInactive: false);
+            bool any = false;
+            foreach (var r in renderers)
+            {
+                if (r == null) continue;
+                if (!any) { bounds = r.bounds; any = true; }
+                else bounds.Encapsulate(r.bounds);
+            }
+            return any;
         }
 
         private static object CaptureSceneViewScreenshot(

@@ -97,6 +97,10 @@ Every tool call is recorded as one JSON line in `<log dir>/unity_mcp_audit.jsonl
 
 Unlike upstream, this fork ships with **telemetry disabled by default** — no usage data is sent anywhere unless you explicitly opt in with `UNITY_MCP_TELEMETRY_ENABLED=1`. Upstream attribution is preserved; the fork simply does not phone home on your behalf.
 
+### Read-only project intelligence
+
+Beyond guardrails, the fork adds inspection tools that work even in `read_only` mode: project/prefab health scans, dependency X-ray, fast scene queries, mobile and UI-layout audits, scene contracts (declare in JSON what a scene must and must not contain, then validate), zero-pixel visual audits, and one-call play smoke tests. The full list with CLI equivalents lives in [`CHANGELOG.fork.md`](CHANGELOG.fork.md).
+
 ### Intended use
 
 For developers who want AI-assisted Unity workflows they can trust on projects that matter. Run `review_only` when you want inspection and test-running without edit risk; run `write` for hands-on development with an acknowledgement gate and an audit trail on the operations that can lose work.

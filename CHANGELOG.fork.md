@@ -28,12 +28,31 @@ Changes made in this **hardened fork** of [MCP for Unity](https://github.com/Cop
 - Optional additive `properties` bags on `manage_gameobject` / `manage_ui` (backward-compatible).
 - Fixed an agent-instruction bug (agents were told to poll `editor_state.isCompiling`; the real field is `compilation.is_compiling`).
 
+### Agentic loop & perception (Phase 3)
+
+- **`manage_checkpoint`** — named scene-state snapshots: `create`/`list`/`restore`/`delete` under `Library/McpCheckpoints/`. Snapshot the open scenes, experiment, roll back. Restore overwrites the original scene files with the checkpointed state and is classified **destructive** (requires `confirm: true` in `write` mode; blocked below it). Checkpoint ids are strictly validated — user input can never become a filesystem path. CLI: `unity-mcp checkpoint …`.
+- **`play_smoke_test`** (validate) — one call: enter play mode, run N seconds, collect errors/exceptions (job survives the domain reload via SessionState + `[InitializeOnLoad]`), exit play, return a pass/fail verdict. CLI: `unity-mcp playtest run`.
+- **`query_scene`** (read) — filter + projection over all loaded scenes in one paged call: name/tag/layer/component/root-path filters; `transform`, `world_bounds` (shape dimensions), `components`, `materials`, `mesh_stats` projections. CLI: `unity-mcp query scene`.
+- **Dependency X-ray on `manage_project`** (read) — `get_dependencies`, `find_references` (reverse lookup), advisory `unused_assets` with explicit caveats (static analysis can't see Addressables/bundles/reflection; never deletes). CLI: `unity-mcp project deps/refs/unused`.
+- **`audit_mobile` on `manage_project`** (read) — 18 data-driven mobile-performance rules (texture/audio/model import settings, IL2CPP/ARM64/graphics APIs, quality settings, scene red flags), each finding with severity + concrete fix. CLI: `unity-mcp project audit-mobile`.
+- **Tiered visual audit on `manage_camera`** — `visibility_report` (read): frustum/screen-rect/coverage/occlusion facts with zero pixels; `screenshot_compare` (validate): numeric pixel-diff vs a baseline (changed %, diff bounding box) — no images shipped; inline screenshots right-sized to 1280 px by default (full-res file on disk unchanged; JPEG + object-crop options). Capture/report actions are payload-aware classified so they work outside `write` mode.
+- **`read_console` `format="summary"`** — deduped/grouped console output (counts + sample + file:line), cutting token burn on error floods.
+- **Test triage on `run_tests_and_summarize`** — optional failing-line source snippets (`include_source_context`) and flaky-vs-deterministic classification (`retry_failed`, re-runs only the failed tests).
+
+### Content validation (Phase 3)
+
+All three are READ-classified, usable in `read_only` mode, strictly non-mutating, and fail closed on unknown actions/keys:
+
+- **`audit_ui_layout`** (read) — audits uGUI layout across a configurable resolution matrix (default 720p/1080p/1440p/ultrawide) using pure analytic math — no GameView switching, nothing dirtied. Detects off-screen/overlapping/tiny/clipped/invisible/blocked interactive UI, suspicious anchors, CanvasScaler issues, listeners-less buttons, missing EventSystem/GraphicRaycaster. Layout-group-driven or heuristic findings are marked `advisory`. Facts only, no screenshots. CLI: `unity-mcp ui audit-layout`.
+- **`validate_scene_contracts`** (read) — validates a loaded scene against a JSON contract (required/forbidden objects, required components, max cameras/lights, missing-reference ban, tags/layers, build-settings inclusion, UI requirements). Unknown contract keys are refused — typo'd rules can't silently pass. Never opens scenes. CLI: `unity-mcp scene validate-contracts`.
+- **`prefab_health` on `manage_project`** (read) — deep prefab validation: missing scripts/references, broken variants, duplicate components, undefined tags/unnamed layers, material/shader issues, disabled colliders/renderers, nested-prefab depth, oversized bounds, dependencies (single-prefab mode). GUID-cursor paged, per-check fault isolation. CLI: `unity-mcp project prefab-health`.
+
 ### Skills & docs
 
 - New Claude Code skills: `unity-health-check` (read-only project pulse) and a generic `unity-scene-setup`; a Safety Mode Awareness section added to the shipped `unity-mcp-skill` (and its dangling reference links repaired).
 - `SECURITY.md` fork safety section; `docs/FORK_HARDENING_REVIEW.md` end-to-end review.
 
-> **C# verification:** the new C# handlers (`ManageProject`, `EditorContext`, `ValidateBuild`) are review-clean but require running the EditMode tests in Unity (`Window → General → Test Runner`) to confirm compilation on your Editor version. The Python layer is fully unit-tested.
+> **C# verification:** the new/extended C# handlers (`ManageProject`, `EditorContext`, `ValidateBuild`, `ManageCheckpoint`, `PlaySmokeTest`, `QueryScene`, `ScreenshotCompare`/`VisibilityReport` + `ScreenshotUtility` changes, `AuditUiLayout`, `ValidateSceneContracts`) are review-clean but require running the EditMode tests in Unity (`Window → General → Test Runner`) to confirm compilation on your Editor version. The Python layer is fully unit-tested (1798 passing).
 
 ### Attribution
 

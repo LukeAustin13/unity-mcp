@@ -73,6 +73,12 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         }
                         return ManageScene.HandleCommand(shotParams);
                     }
+
+                    case "screenshot_compare":
+                        return ScreenshotCompare.HandleCommand(@params);
+
+                    case "visibility_report":
+                        return VisibilityReport.HandleCommand(@params);
                 }
 
                 // Tier 2: Cinemachine-only actions
@@ -119,6 +125,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         return new ErrorResponse(
                             $"Unknown action: '{action}'. Valid actions: ping, create_camera, set_target, "
                             + "set_lens, set_priority, list_cameras, screenshot, screenshot_multiview, "
+                            + "screenshot_compare, visibility_report, "
                             + "ensure_brain, get_brain_status, "
                             + "set_body, set_aim, set_noise, add_extension, remove_extension, "
                             + "set_blend, force_camera, release_override.");

@@ -256,3 +256,65 @@ def create_image(name: str, parent: str, sprite: Optional[str]):
 
     click.echo(format_output(result, config.format))
     print_success(f"Created Image: {name}")
+
+
+@ui.command("audit-layout")
+@click.option(
+    "--resolution", "-r", "resolutions",
+    multiple=True,
+    help="Resolution to audit as 'WxH' (repeatable, max 8). Defaults to the standard 16:9/21:9 matrix.",
+)
+@click.option(
+    "--scene", "-s",
+    default=None,
+    help="Restrict to a single LOADED scene by name (never opens scenes).",
+)
+@click.option(
+    "--include-inactive",
+    is_flag=True,
+    default=False,
+    help="Include inactive UI objects.",
+)
+@click.option(
+    "--min-target-px",
+    type=int,
+    default=None,
+    help="Minimum interactive touch-target size in pixels (default 44, clamped 8..256).",
+)
+@click.option(
+    "--max-findings",
+    type=int,
+    default=None,
+    help="Cap on emitted findings before truncation (default 500, cap 2000).",
+)
+@handle_unity_errors
+def audit_layout(resolutions: tuple, scene: Optional[str], include_inactive: bool,
+                 min_target_px: Optional[int], max_findings: Optional[int]):
+    """Audit uGUI layout analytically across a resolution matrix (READ-only).
+
+    Simulates CanvasScaler scaling and RectTransform screen rects by math and
+    reports off-screen, overlapping, tiny-target, invisible, and structural UI
+    problems without mutating anything.
+
+    \b
+    Examples:
+        unity-mcp ui audit-layout
+        unity-mcp ui audit-layout -r 1920x1080 -r 1080x1920 --scene Main
+        unity-mcp ui audit-layout --min-target-px 48 --include-inactive
+    """
+    config = get_config()
+
+    params: dict[str, Any] = {}
+    if resolutions:
+        params["resolutions"] = list(resolutions)
+    if scene:
+        params["scene"] = scene
+    if include_inactive:
+        params["include_inactive"] = True
+    if min_target_px is not None:
+        params["min_target_px"] = min_target_px
+    if max_findings is not None:
+        params["max_findings"] = max_findings
+
+    result = run_command("audit_ui_layout", params, config)
+    click.echo(format_output(result, config.format))

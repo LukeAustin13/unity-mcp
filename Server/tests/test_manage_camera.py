@@ -15,6 +15,7 @@ from services.tools.manage_camera import (
     EXTENSION_ACTIONS,
     CONTROL_ACTIONS,
     CAPTURE_ACTIONS,
+    ANALYSIS_ACTIONS,
 )
 
 
@@ -51,7 +52,7 @@ def mock_unity(monkeypatch):
 def test_all_actions_is_union_of_sub_lists():
     expected = set(
         SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS
-        + EXTENSION_ACTIONS + CONTROL_ACTIONS + CAPTURE_ACTIONS
+        + EXTENSION_ACTIONS + CONTROL_ACTIONS + CAPTURE_ACTIONS + ANALYSIS_ACTIONS
     )
     assert set(ALL_ACTIONS) == expected
 
@@ -61,7 +62,14 @@ def test_no_duplicate_actions():
 
 
 def test_all_actions_count():
-    assert len(ALL_ACTIONS) == 18
+    assert len(ALL_ACTIONS) == 20
+
+
+def test_new_visual_audit_actions_present():
+    assert "screenshot_compare" in CAPTURE_ACTIONS
+    assert "visibility_report" in ANALYSIS_ACTIONS
+    assert "screenshot_compare" in ALL_ACTIONS
+    assert "visibility_report" in ALL_ACTIONS
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +509,263 @@ def test_screenshot_invalid_orbit_elevations(mock_unity):
     )
     assert result["success"] is False
     assert "orbit_elevations" in result["message"]
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: right-sized capture (max_width default, crop, format)
+# ---------------------------------------------------------------------------
+
+def test_include_image_defaults_max_width_to_1280(mock_unity):
+    """include_image without an explicit width must right-size the inline payload."""
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            camera="Main Camera",
+            include_image=True,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["includeImage"] is True
+    assert mock_unity["params"]["maxWidth"] == 1280
+
+
+def test_explicit_max_width_wins_over_default(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            max_width=800,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["maxWidth"] == 800
+
+
+def test_max_resolution_suppresses_default_max_width(mock_unity):
+    """A caller pinning max_resolution should not also get the max_width default."""
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            max_resolution=512,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["maxResolution"] == 512
+    assert "maxWidth" not in mock_unity["params"]
+
+
+def test_no_default_max_width_without_include_image(mock_unity):
+    result = asyncio.run(
+        manage_camera(SimpleNamespace(), action="screenshot")
+    )
+    assert result["success"] is True
+    assert "maxWidth" not in mock_unity["params"]
+
+
+def test_batch_does_not_get_default_max_width(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            batch="surround",
+            include_image=True,
+        )
+    )
+    assert result["success"] is True
+    assert "maxWidth" not in mock_unity["params"]
+
+
+def test_image_format_and_jpg_quality_forwarded(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            image_format="jpg",
+            jpg_quality=70,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["imageFormat"] == "jpg"
+    assert mock_unity["params"]["jpgQuality"] == 70
+
+
+def test_image_format_jpeg_normalized_to_jpg(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            image_format="JPEG",
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["imageFormat"] == "jpg"
+
+
+def test_invalid_image_format_rejected(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            image_format="webp",
+        )
+    )
+    assert result["success"] is False
+    assert "image_format" in result["message"]
+    assert "params" not in mock_unity
+
+
+def test_invalid_jpg_quality_rejected(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            image_format="jpg",
+            jpg_quality=0,
+        )
+    )
+    assert result["success"] is False
+    assert "jpg_quality" in result["message"]
+    assert "params" not in mock_unity
+
+
+def test_crop_target_and_padding_forwarded(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            crop_target="HUD/HealthBar",
+            crop_padding_px=16,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["cropTarget"] == "HUD/HealthBar"
+    assert mock_unity["params"]["cropPaddingPx"] == 16
+
+
+def test_crop_padding_negative_rejected(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot",
+            include_image=True,
+            crop_target="Cube",
+            crop_padding_px=-5,
+        )
+    )
+    assert result["success"] is False
+    assert "crop_padding_px" in result["message"]
+    assert "params" not in mock_unity
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: screenshot_compare
+# ---------------------------------------------------------------------------
+
+def test_screenshot_compare_requires_baseline(mock_unity):
+    result = asyncio.run(
+        manage_camera(SimpleNamespace(), action="screenshot_compare")
+    )
+    assert result["success"] is False
+    assert "baseline_path" in result["message"]
+    assert "params" not in mock_unity
+
+
+def test_screenshot_compare_forwards_params(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot_compare",
+            baseline_path="Assets/Screenshots/before.png",
+            diff_threshold=12,
+            save_diff=True,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["action"] == "screenshot_compare"
+    assert mock_unity["params"]["baselinePath"] == "Assets/Screenshots/before.png"
+    assert mock_unity["params"]["diffThreshold"] == 12
+    assert mock_unity["params"]["saveDiff"] is True
+
+
+def test_screenshot_compare_invalid_threshold_rejected(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="screenshot_compare",
+            baseline_path="Assets/Screenshots/before.png",
+            diff_threshold=999,
+        )
+    )
+    assert result["success"] is False
+    assert "diff_threshold" in result["message"]
+    assert "params" not in mock_unity
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: visibility_report
+# ---------------------------------------------------------------------------
+
+def test_visibility_report_sends_action(mock_unity):
+    result = asyncio.run(
+        manage_camera(SimpleNamespace(), action="visibility_report")
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["action"] == "visibility_report"
+
+
+def test_visibility_report_forwards_camera_and_paging(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="visibility_report",
+            camera="CM FollowCam",
+            page_size=10,
+            cursor=20,
+            check_occlusion=True,
+        )
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["camera"] == "CM FollowCam"
+    assert mock_unity["params"]["pageSize"] == 10
+    assert mock_unity["params"]["cursor"] == 20
+    assert mock_unity["params"]["checkOcclusion"] is True
+
+
+def test_visibility_report_rejects_bad_page_size(mock_unity):
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="visibility_report",
+            page_size=0,
+        )
+    )
+    assert result["success"] is False
+    assert "page_size" in result["message"]
+    assert "params" not in mock_unity
+
+
+def test_visibility_report_does_not_send_screenshot_params(mock_unity):
+    """Screenshot-only params must not leak into the visibility_report payload."""
+    result = asyncio.run(
+        manage_camera(
+            SimpleNamespace(),
+            action="visibility_report",
+            include_image=True,
+            max_width=900,
+        )
+    )
+    assert result["success"] is True
+    assert "includeImage" not in mock_unity["params"]
+    assert "maxWidth" not in mock_unity["params"]
 
 
 # ---------------------------------------------------------------------------

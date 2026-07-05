@@ -473,6 +473,12 @@ def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
     if not isinstance(data, dict):
         return None
 
+    def _mime_for(container: dict[str, Any]) -> str:
+        fmt = container.get("imageFormat")
+        if isinstance(fmt, str) and fmt.strip().lower() in ("jpg", "jpeg"):
+            return "image/jpeg"
+        return "image/png"
+
     # Batch images (surround/orbit mode) — multiple screenshots in one response
     screenshots = data.get("screenshots")
     if screenshots and isinstance(screenshots, list):
@@ -494,7 +500,7 @@ def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
             b64 = s.get("imageBase64")
             if b64:
                 blocks.append(TextContent(type="text", text=f"[Angle: {s.get('angle', '?')}]"))
-                blocks.append(ImageContent(type="image", data=b64, mimeType="image/png"))
+                blocks.append(ImageContent(type="image", data=b64, mimeType=_mime_for(s)))
         return ToolResult(content=blocks)
 
     # Single image (include_image or positioned capture) or contact sheet
@@ -506,9 +512,16 @@ def extract_screenshot_images(response: dict[str, Any]) -> "ToolResult | None":
     return ToolResult(
         content=[
             TextContent(type="text", text=json.dumps(text_result)),
-            ImageContent(type="image", data=image_b64, mimeType="image/png"),
+            ImageContent(type="image", data=image_b64, mimeType=_mime_for(data)),
         ],
     )
+
+
+# Default inline-image width when include_image is requested but no max_width
+# is given. Sits just under Claude's vision downscale ceiling (~1568px longest
+# edge), so the inline payload carries no fidelity the model cannot see while
+# staying larger than the legacy 640px default.
+DEFAULT_INLINE_MAX_WIDTH = 1280
 
 
 def build_screenshot_params(
@@ -519,6 +532,11 @@ def build_screenshot_params(
     camera: str | None = None,
     include_image: bool | str | None = None,
     max_resolution: int | str | None = None,
+    max_width: int | str | None = None,
+    image_format: str | None = None,
+    jpg_quality: int | str | None = None,
+    crop_target: str | None = None,
+    crop_padding_px: int | str | None = None,
     capture_source: str | None = None,
     batch: str | None = None,
     view_target: str | int | list[float] | None = None,
@@ -534,6 +552,11 @@ def build_screenshot_params(
     if validation fails, or None on success.
 
     Shared screenshot handling (used by manage_camera).
+
+    When include_image is true and neither max_width nor max_resolution is given,
+    the inline image is right-sized to DEFAULT_INLINE_MAX_WIDTH so the payload is
+    never a multi-MB image the model cannot see at full fidelity. The full-res
+    file on disk is unaffected.
     """
     if screenshot_file_name:
         params["fileName"] = screenshot_file_name
@@ -554,6 +577,36 @@ def build_screenshot_params(
         if coerced_max_resolution <= 0:
             return {"success": False, "message": "max_resolution must be a positive integer."}
         params["maxResolution"] = coerced_max_resolution
+    coerced_max_width = coerce_int(max_width, default=None)
+    if coerced_max_width is not None:
+        if coerced_max_width <= 0:
+            return {"success": False, "message": "max_width must be a positive integer."}
+        params["maxWidth"] = coerced_max_width
+    if image_format is not None:
+        normalized_format = str(image_format).strip().lower()
+        if normalized_format in ("jpeg",):
+            normalized_format = "jpg"
+        if normalized_format not in {"png", "jpg"}:
+            return {"success": False, "message": "image_format must be either 'png' or 'jpg'."}
+        params["imageFormat"] = normalized_format
+    coerced_jpg_quality = coerce_int(jpg_quality, default=None)
+    if jpg_quality is not None and coerced_jpg_quality is None:
+        return {"success": False, "message": "jpg_quality must be an integer between 1 and 100."}
+    if coerced_jpg_quality is not None:
+        if coerced_jpg_quality < 1 or coerced_jpg_quality > 100:
+            return {"success": False, "message": "jpg_quality must be an integer between 1 and 100."}
+        params["jpgQuality"] = coerced_jpg_quality
+    if crop_target is not None:
+        trimmed_crop = str(crop_target).strip()
+        if trimmed_crop:
+            params["cropTarget"] = trimmed_crop
+    coerced_crop_padding = coerce_int(crop_padding_px, default=None)
+    if crop_padding_px is not None and coerced_crop_padding is None:
+        return {"success": False, "message": "crop_padding_px must be a non-negative integer."}
+    if coerced_crop_padding is not None:
+        if coerced_crop_padding < 0:
+            return {"success": False, "message": "crop_padding_px must be a non-negative integer."}
+        params["cropPaddingPx"] = coerced_crop_padding
     if capture_source is not None:
         normalized_capture_source = str(capture_source).strip().lower()
         if normalized_capture_source not in {"game_view", "scene_view"}:
@@ -624,4 +677,74 @@ def build_screenshot_params(
                 "message": "capture_source='scene_view' does not support camera selection.",
             }
 
+    # Right-size the inline payload by default. When the caller asks for an inline
+    # image but pins neither width, cap it at DEFAULT_INLINE_MAX_WIDTH so we never
+    # ship a multi-MB image the model downscales away. Batch/contact-sheet modes
+    # already carry their own per-tile cap (maxResolution), so only fill the
+    # single-image path here.
+    if (
+        params.get("includeImage") is True
+        and "maxWidth" not in params
+        and "maxResolution" not in params
+        and not batch
+    ):
+        params["maxWidth"] = DEFAULT_INLINE_MAX_WIDTH
+
+    return None
+
+
+def build_visual_audit_params(
+    params: dict[str, Any],
+    *,
+    camera: str | None = None,
+    baseline_path: str | None = None,
+    diff_threshold: int | str | None = None,
+    save_diff: bool | str | None = None,
+    check_occlusion: bool | str | None = None,
+    page_size: int | str | None = None,
+    cursor: int | str | None = None,
+) -> dict[str, Any] | None:
+    """Populate keys for the visibility_report / screenshot_compare actions.
+
+    Sibling to build_screenshot_params. Returns an error dict on validation
+    failure, or None on success. Path validation for baseline_path is enforced
+    C#-side (mirroring the screenshot-folder hardening); here we only reject an
+    empty string so the C# side always sees a usable value.
+    """
+    if camera:
+        trimmed_camera = str(camera).strip()
+        if trimmed_camera:
+            params["camera"] = trimmed_camera
+    if baseline_path is not None:
+        trimmed_baseline = str(baseline_path).strip()
+        if not trimmed_baseline:
+            return {"success": False, "message": "baseline_path must be a non-empty path string."}
+        params["baselinePath"] = trimmed_baseline
+    coerced_threshold = coerce_int(diff_threshold, default=None)
+    if diff_threshold is not None and coerced_threshold is None:
+        return {"success": False, "message": "diff_threshold must be an integer between 0 and 255."}
+    if coerced_threshold is not None:
+        if coerced_threshold < 0 or coerced_threshold > 255:
+            return {"success": False, "message": "diff_threshold must be an integer between 0 and 255."}
+        params["diffThreshold"] = coerced_threshold
+    coerced_save_diff = coerce_bool(save_diff, default=None)
+    if coerced_save_diff is not None:
+        params["saveDiff"] = coerced_save_diff
+    coerced_check_occlusion = coerce_bool(check_occlusion, default=None)
+    if coerced_check_occlusion is not None:
+        params["checkOcclusion"] = coerced_check_occlusion
+    coerced_page_size = coerce_int(page_size, default=None)
+    if page_size is not None and coerced_page_size is None:
+        return {"success": False, "message": "page_size must be a positive integer."}
+    if coerced_page_size is not None:
+        if coerced_page_size <= 0:
+            return {"success": False, "message": "page_size must be a positive integer."}
+        params["pageSize"] = coerced_page_size
+    coerced_cursor = coerce_int(cursor, default=None)
+    if cursor is not None and coerced_cursor is None:
+        return {"success": False, "message": "cursor must be a non-negative integer."}
+    if coerced_cursor is not None:
+        if coerced_cursor < 0:
+            return {"success": False, "message": "cursor must be a non-negative integer."}
+        params["cursor"] = coerced_cursor
     return None

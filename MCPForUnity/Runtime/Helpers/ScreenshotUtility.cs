@@ -20,7 +20,7 @@ namespace MCPForUnity.Runtime.Helpers
         }
 
         public ScreenshotCaptureResult(string fullPath, string projectRelativePath, int superSize, bool isAsync,
-            string imageBase64, int imageWidth, int imageHeight)
+            string imageBase64, int imageWidth, int imageHeight, string imageFormat = "png")
         {
             FullPath = fullPath;
             ProjectRelativePath = projectRelativePath;
@@ -29,6 +29,7 @@ namespace MCPForUnity.Runtime.Helpers
             ImageBase64 = imageBase64;
             ImageWidth = imageWidth;
             ImageHeight = imageHeight;
+            ImageFormat = string.IsNullOrEmpty(imageFormat) ? "png" : imageFormat;
         }
 
         public string FullPath { get; }
@@ -36,10 +37,41 @@ namespace MCPForUnity.Runtime.Helpers
         public string ProjectRelativePath { get; }
         public int SuperSize { get; }
         public bool IsAsync { get; }
-        /// <summary>Base64-encoded PNG image data. Only populated when include_image is true.</summary>
+        /// <summary>Base64-encoded inline image data. Only populated when include_image is true.</summary>
         public string ImageBase64 { get; }
         public int ImageWidth { get; }
         public int ImageHeight { get; }
+        /// <summary>Encoding of the inline image ("png" or "jpg"). The on-disk file is always PNG.</summary>
+        public string ImageFormat { get; }
+    }
+
+    /// <summary>
+    /// Options that shape only the INLINE base64 image (never the on-disk file):
+    /// an optional width cap (aspect preserved), an optional crop rectangle in
+    /// texture pixel space, and the encoding format. The full-resolution PNG on
+    /// disk is always written unchanged.
+    /// </summary>
+    public readonly struct InlineImageOptions
+    {
+        public InlineImageOptions(int maxWidth, RectInt? crop, bool useJpg, int jpgQuality)
+        {
+            MaxWidth = maxWidth;
+            Crop = crop;
+            UseJpg = useJpg;
+            JpgQuality = Mathf.Clamp(jpgQuality <= 0 ? 80 : jpgQuality, 1, 100);
+        }
+
+        /// <summary>Cap for the inline image width in pixels (0 = no width cap).</summary>
+        public int MaxWidth { get; }
+        /// <summary>Crop rectangle in source-texture pixel space (bottom-left origin), or null.</summary>
+        public RectInt? Crop { get; }
+        public bool UseJpg { get; }
+        public int JpgQuality { get; }
+
+        public string MimeType => UseJpg ? "image/jpeg" : "image/png";
+        public string Format => UseJpg ? "jpg" : "png";
+
+        public static InlineImageOptions Default => new InlineImageOptions(0, null, false, 80);
     }
 
     public static class ScreenshotUtility
@@ -94,7 +126,8 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName = true,
             bool includeImage = false,
             int maxResolution = 0,
-            string folderOverride = null)
+            string folderOverride = null,
+            InlineImageOptions? inlineOptions = null)
         {
             if (camera == null)
             {
@@ -115,6 +148,7 @@ namespace MCPForUnity.Runtime.Helpers
             Texture2D tex = null;
             Texture2D downscaled = null;
             string imageBase64 = null;
+            string imageFormat = "png";
             int imgW = 0, imgH = 0;
             try
             {
@@ -131,20 +165,33 @@ namespace MCPForUnity.Runtime.Helpers
 
                 if (includeImage)
                 {
-                    int targetMax = maxResolution > 0 ? maxResolution : 640;
-                    if (width > targetMax || height > targetMax)
+                    // New right-sizing path (max_width / crop / jpg) when inline options
+                    // are supplied; otherwise the legacy longest-edge maxResolution path.
+                    if (inlineOptions.HasValue)
                     {
-                        downscaled = DownscaleTexture(tex, targetMax);
-                        byte[] smallPng = downscaled.EncodeToPNG();
-                        imageBase64 = System.Convert.ToBase64String(smallPng);
-                        imgW = downscaled.width;
-                        imgH = downscaled.height;
+                        var (b64, w, h, fmt) = RightSizeInline(tex, inlineOptions.Value);
+                        imageBase64 = b64;
+                        imgW = w;
+                        imgH = h;
+                        imageFormat = fmt;
                     }
                     else
                     {
-                        imageBase64 = System.Convert.ToBase64String(png);
-                        imgW = width;
-                        imgH = height;
+                        int targetMax = maxResolution > 0 ? maxResolution : 640;
+                        if (width > targetMax || height > targetMax)
+                        {
+                            downscaled = DownscaleTexture(tex, targetMax);
+                            byte[] smallPng = downscaled.EncodeToPNG();
+                            imageBase64 = System.Convert.ToBase64String(smallPng);
+                            imgW = downscaled.width;
+                            imgH = downscaled.height;
+                        }
+                        else
+                        {
+                            imageBase64 = System.Convert.ToBase64String(png);
+                            imgW = width;
+                            imgH = height;
+                        }
                     }
                 }
             }
@@ -161,7 +208,7 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 return new ScreenshotCaptureResult(
                     result.FullPath, result.ProjectRelativePath, result.SuperSize, false,
-                    imageBase64, imgW, imgH);
+                    imageBase64, imgW, imgH, imageFormat);
             }
             return result;
         }
@@ -206,12 +253,14 @@ namespace MCPForUnity.Runtime.Helpers
             bool ensureUniqueFileName = true,
             bool includeImage = false,
             int maxResolution = 0,
-            string folderOverride = null)
+            string folderOverride = null,
+            InlineImageOptions? inlineOptions = null)
         {
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride: folderOverride, isAsync: false);
             Texture2D tex = null;
             Texture2D downscaled = null;
             string imageBase64 = null;
+            string imageFormat = "png";
             int imgW = 0, imgH = 0;
             try
             {
@@ -230,7 +279,7 @@ namespace MCPForUnity.Runtime.Helpers
                     var cam = FindAvailableCamera();
                     if (cam != null)
                         return CaptureFromCameraToProjectFolder(cam, fileName, superSize, ensureUniqueFileName,
-                            includeImage, maxResolution, folderOverride: folderOverride);
+                            includeImage, maxResolution, folderOverride: folderOverride, inlineOptions: inlineOptions);
                     throw new InvalidOperationException("ScreenCapture.CaptureScreenshotAsTexture returned null and no fallback camera available.");
                 }
 
@@ -242,20 +291,31 @@ namespace MCPForUnity.Runtime.Helpers
 
                 if (includeImage)
                 {
-                    int targetMax = maxResolution > 0 ? maxResolution : 640;
-                    if (width > targetMax || height > targetMax)
+                    if (inlineOptions.HasValue)
                     {
-                        downscaled = DownscaleTexture(tex, targetMax);
-                        byte[] smallPng = downscaled.EncodeToPNG();
-                        imageBase64 = System.Convert.ToBase64String(smallPng);
-                        imgW = downscaled.width;
-                        imgH = downscaled.height;
+                        var (b64, w, h, fmt) = RightSizeInline(tex, inlineOptions.Value);
+                        imageBase64 = b64;
+                        imgW = w;
+                        imgH = h;
+                        imageFormat = fmt;
                     }
                     else
                     {
-                        imageBase64 = System.Convert.ToBase64String(png);
-                        imgW = width;
-                        imgH = height;
+                        int targetMax = maxResolution > 0 ? maxResolution : 640;
+                        if (width > targetMax || height > targetMax)
+                        {
+                            downscaled = DownscaleTexture(tex, targetMax);
+                            byte[] smallPng = downscaled.EncodeToPNG();
+                            imageBase64 = System.Convert.ToBase64String(smallPng);
+                            imgW = downscaled.width;
+                            imgH = downscaled.height;
+                        }
+                        else
+                        {
+                            imageBase64 = System.Convert.ToBase64String(png);
+                            imgW = width;
+                            imgH = height;
+                        }
                     }
                 }
             }
@@ -269,7 +329,7 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 return new ScreenshotCaptureResult(
                     result.FullPath, result.ProjectRelativePath, result.SuperSize, false,
-                    imageBase64, imgW, imgH);
+                    imageBase64, imgW, imgH, imageFormat);
             }
             return result;
         }
@@ -547,6 +607,94 @@ namespace MCPForUnity.Runtime.Helpers
                 case '+': return 0b00000_00100_00100_11111_00100_00100_00000UL;
                 default:  return 0UL;
             }
+        }
+
+        /// <summary>
+        /// Right-sizes the INLINE image from a full-resolution capture: optionally crops
+        /// to a pixel rect (bottom-left origin), caps the width (aspect preserved), and
+        /// encodes as PNG or JPG. Returns the base64 string plus the encoded dimensions
+        /// and format. Never mutates or destroys <paramref name="source"/>.
+        /// </summary>
+        public static (string base64, int width, int height, string format) RightSizeInline(
+            Texture2D source, InlineImageOptions options)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+
+            Texture2D cropped = null;
+            Texture2D scaled = null;
+            try
+            {
+                Texture2D working = source;
+
+                // Crop first so the width cap applies to the cropped region.
+                if (options.Crop.HasValue)
+                {
+                    RectInt clamped = ClampRect(options.Crop.Value, source.width, source.height);
+                    if (clamped.width > 0 && clamped.height > 0 &&
+                        (clamped.width != source.width || clamped.height != source.height))
+                    {
+                        cropped = CropTexture(source, clamped);
+                        working = cropped;
+                    }
+                }
+
+                // Width cap (aspect preserved). DownscaleTexture takes a longest-edge cap,
+                // so convert the width cap into the equivalent longest-edge value.
+                if (options.MaxWidth > 0 && working.width > options.MaxWidth)
+                {
+                    int longestEdge = Mathf.Max(
+                        options.MaxWidth,
+                        Mathf.RoundToInt((float)working.height * options.MaxWidth / working.width));
+                    scaled = DownscaleTexture(working, longestEdge);
+                    working = scaled;
+                }
+
+                byte[] bytes = options.UseJpg
+                    ? working.EncodeToJPG(options.JpgQuality)
+                    : working.EncodeToPNG();
+                return (System.Convert.ToBase64String(bytes), working.width, working.height, options.Format);
+            }
+            finally
+            {
+                DestroyTexture(cropped);
+                DestroyTexture(scaled);
+            }
+        }
+
+        private static RectInt ClampRect(RectInt rect, int texWidth, int texHeight)
+        {
+            int x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, texWidth));
+            int y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, texHeight));
+            int w = Mathf.Clamp(rect.width, 0, texWidth - x);
+            int h = Mathf.Clamp(rect.height, 0, texHeight - y);
+            return new RectInt(x, y, w, h);
+        }
+
+        /// <summary>
+        /// Copies a pixel rect (bottom-left origin) out of <paramref name="source"/> into a
+        /// new Texture2D. Caller must destroy the returned Texture2D.
+        /// </summary>
+        public static Texture2D CropTexture(Texture2D source, RectInt rect)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+            RectInt r = ClampRect(rect, source.width, source.height);
+            if (r.width <= 0 || r.height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(rect), "Crop rectangle is empty after clamping.");
+
+            Color32[] pixels = source.GetPixels32();
+            var dst = new Texture2D(r.width, r.height, TextureFormat.RGBA32, false);
+            var region = new Color32[r.width * r.height];
+            for (int row = 0; row < r.height; row++)
+            {
+                int srcOffset = (r.y + row) * source.width + r.x;
+                int dstOffset = row * r.width;
+                System.Array.Copy(pixels, srcOffset, region, dstOffset, r.width);
+            }
+            dst.SetPixels32(region);
+            dst.Apply();
+            return dst;
         }
 
         /// <summary>

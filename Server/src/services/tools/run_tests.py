@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import time
 from typing import Annotated, Any, Literal
 
@@ -353,6 +355,149 @@ async def get_test_job(
     return GetTestJobResponse(**response)
 
 
+# --- test-failure triage helpers ---------------------------------------------
+#
+# Both features below are opt-in and never change the default output: they only
+# add extra keys when their parameters are enabled.
+
+# Match the file/line in a stack-trace frame. Handles the two common shapes:
+#   "  at Ns.Type.Method () [0x0] in C:\proj\Foo.cs:42"   (Mono/Unity)
+#   "  in /home/u/proj/Foo.cs:line 42"                    (POSIX "in <path>:line NN")
+# The path capture stops at ":<digits>" or ":line <digits>".
+_STACK_FRAME_RE = re.compile(
+    r"(?:\bin\s+|\bat\s+.*?\bin\s+)(?P<path>.+?):(?:line\s+)?(?P<line>\d+)\b",
+    re.IGNORECASE,
+)
+
+# Max failing tests to enrich with source context (bounds file I/O).
+_MAX_SOURCE_CONTEXT = 10
+
+
+def _parse_stack_location(stack_trace: str | None) -> tuple[str, int] | None:
+    """Return the first (path, line) parsed from a stack trace, or None.
+
+    Scans frames top-to-bottom and returns the first frame whose captured path
+    exists on the local filesystem — that is the frame the caller can actually
+    show. If no captured path exists locally (HTTP-remote case), returns the
+    first syntactically-parsed frame so callers can still see where it failed.
+    """
+    if not stack_trace:
+        return None
+    first_parsed: tuple[str, int] | None = None
+    for m in _STACK_FRAME_RE.finditer(stack_trace):
+        path = m.group("path").strip().strip('"')
+        try:
+            line = int(m.group("line"))
+        except (TypeError, ValueError):
+            continue
+        if line <= 0:
+            continue
+        if first_parsed is None:
+            first_parsed = (path, line)
+        if os.path.isfile(path):
+            return (path, line)
+    return first_parsed
+
+
+def _extract_source_context(path: str, line: int, radius: int = 5) -> dict[str, Any] | None:
+    """Read ±radius lines around ``line`` from ``path``. Returns None when the
+    file is not locally readable (e.g. the server runs remote from the tests)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return None
+    if not lines:
+        return None
+    total = len(lines)
+    if line < 1 or line > total:
+        return None
+    start = max(1, line - radius)
+    end = min(total, line + radius)
+    rendered = []
+    for n in range(start, end):
+        text = lines[n - 1].rstrip("\n")
+        marker = ">" if n == line else " "
+        rendered.append(f"{marker} {n}: {text}")
+    return {
+        "file": path,
+        "line": line,
+        "start_line": start,
+        "end_line": end,
+        "lines": rendered,
+    }
+
+
+def _attach_source_context(failing_results: list[Any], cap: int = _MAX_SOURCE_CONTEXT) -> None:
+    """Mutate up to ``cap`` entries in ``failing_results`` (dicts with a matching
+    RunTestsTestResult) to add a ``source_context`` key when locally readable."""
+    enriched = 0
+    for out_entry, src in failing_results:
+        if enriched >= cap:
+            break
+        loc = _parse_stack_location(getattr(src, "stackTrace", None))
+        if loc is None:
+            continue
+        ctx = _extract_source_context(loc[0], loc[1])
+        if ctx is not None:
+            out_entry["source_context"] = ctx
+            enriched += 1
+
+
+async def _rerun_and_classify(
+    ctx: Context,
+    mode: str,
+    failed_full_names: list[str],
+    retries: int,
+    wait: int,
+) -> tuple[list[str], list[str]] | None:
+    """Re-run only ``failed_full_names`` up to ``retries`` times. A test that
+    passes on any retry is flaky; one that fails every retry is deterministic.
+
+    Returns (flaky, deterministic) sorted lists, or None if a retry run could
+    not be started/completed (caller then omits the classification)."""
+    still_failing = set(failed_full_names)
+    passed_at_least_once: set[str] = set()
+
+    for _ in range(retries):
+        if not still_failing:
+            break
+        start = await run_tests(
+            ctx,
+            mode=mode,
+            test_names=sorted(still_failing),
+            include_failed_tests=True,
+        )
+        if not getattr(start, "success", False):
+            return None
+        start_data = getattr(start, "data", None)
+        job_id = getattr(start_data, "job_id", None) if start_data else None
+        if not job_id:
+            return None
+        job = await get_test_job(ctx, job_id, include_failed_tests=True, wait_timeout=wait)
+        if not getattr(job, "success", False):
+            return None
+        jd = getattr(job, "data", None)
+        status = getattr(jd, "status", "unknown") if jd else "unknown"
+        if status not in ("succeeded", "failed", "cancelled"):
+            # Retry run did not finish in time — cannot classify reliably.
+            return None
+        result = getattr(jd, "result", None) if jd else None
+        this_run_failed = {
+            r.fullName
+            for r in (getattr(result, "results", None) or [])
+            if str(getattr(r, "state", "")).lower().startswith("fail")
+        }
+        # Any originally-failing test not in this run's failures passed this time.
+        newly_passed = {n for n in still_failing if n not in this_run_failed}
+        passed_at_least_once |= newly_passed
+        still_failing -= newly_passed
+
+    flaky = sorted(passed_at_least_once)
+    deterministic = sorted(still_failing)
+    return flaky, deterministic
+
+
 @mcp_for_unity_tool(
     group="testing",
     description=(
@@ -361,7 +506,10 @@ async def get_test_job(
         "counts plus a capped list of failing tests — instead of start + poll + "
         "poll + parse. If the run is still going when timeout_seconds elapses, "
         "returns timed_out=true with progress; poll get_test_job for the final "
-        "result. Prefer this over run_tests+get_test_job for the common case."
+        "result. Prefer this over run_tests+get_test_job for the common case. "
+        "Optional triage: include_source_context attaches ±5 source lines around "
+        "each failing test's stack frame (local runs only); retry_failed re-runs "
+        "only the failed tests to split flaky from deterministic failures."
     ),
     annotations=ToolAnnotations(
         title="Run Tests and Summarize",
@@ -376,6 +524,18 @@ async def run_tests_and_summarize(
     assembly_names: Annotated[list[str] | str, "Assembly names to filter tests by"] | None = None,
     timeout_seconds: Annotated[int, "Max seconds to wait for completion (default 180)"] = 180,
     max_failures: Annotated[int, "Max failing tests to list (default 20)"] = 20,
+    include_source_context: Annotated[
+        bool,
+        "For each failing test, parse its stack trace and attach ±5 source lines "
+        "when the file is locally readable (stdio/local only). Capped at 10 failures. "
+        "Silently skipped for files not on this machine (default false).",
+    ] = False,
+    retry_failed: Annotated[
+        int,
+        "After a run with failures, re-run ONLY the failed tests up to N times "
+        "(cap 3) and classify each as 'flaky' (passed on a retry) or "
+        "'deterministic' (failed every retry). 0 disables retries (default 0).",
+    ] = 0,
 ) -> dict[str, Any]:
     start = await run_tests(
         ctx,
@@ -436,12 +596,30 @@ async def run_tests_and_summarize(
             r for r in (result.results or [])
             if str(getattr(r, "state", "")).lower().startswith("fail")
         ]
-        out["failing_tests"] = [
+        listed = failing[:cap]
+        failing_entries = [
             {"full_name": r.fullName, "message": (r.message or "").strip()[:500]}
-            for r in failing[:cap]
+            for r in listed
         ]
+        # Opt-in: enrich the listed failures with local source context. Zips each
+        # output dict with its source RunTestsTestResult (for the stack trace).
+        if include_source_context and failing_entries:
+            _attach_source_context(list(zip(failing_entries, listed)))
+        out["failing_tests"] = failing_entries
         out["failing_tests_truncated"] = len(failing) > cap
         out["all_passed"] = completed and result_summary.failed == 0
+
+        # Opt-in: re-run the failing tests to separate flaky from deterministic.
+        retries = max(0, min(3, int(retry_failed)))
+        if retries and completed and failing:
+            failed_names = [r.fullName for r in failing if r.fullName]
+            classified = await _rerun_and_classify(
+                ctx, mode, failed_names, retries, wait,
+            )
+            if classified is not None:
+                flaky, deterministic = classified
+                out["summary"]["flaky_tests"] = flaky
+                out["summary"]["deterministic_failures"] = deterministic
     elif not completed:
         out["timed_out"] = True
         out["message"] = (

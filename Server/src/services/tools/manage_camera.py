@@ -6,7 +6,11 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
-from services.tools.utils import build_screenshot_params, extract_screenshot_images
+from services.tools.utils import (
+    build_screenshot_params,
+    build_visual_audit_params,
+    extract_screenshot_images,
+)
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
@@ -26,9 +30,16 @@ CONTROL_ACTIONS = [
     "set_blend", "force_camera", "release_override", "list_cameras",
 ]
 
-CAPTURE_ACTIONS = ["screenshot", "screenshot_multiview"]
+# Capture actions produce artifact files (screenshots / diff images).
+CAPTURE_ACTIONS = ["screenshot", "screenshot_multiview", "screenshot_compare"]
 
-ALL_ACTIONS = SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS + EXTENSION_ACTIONS + CONTROL_ACTIONS + CAPTURE_ACTIONS
+# Zero-pixel visual facts (no artifact written).
+ANALYSIS_ACTIONS = ["visibility_report"]
+
+ALL_ACTIONS = (
+    SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS + EXTENSION_ACTIONS
+    + CONTROL_ACTIONS + CAPTURE_ACTIONS + ANALYSIS_ACTIONS
+)
 
 
 @mcp_for_unity_tool(
@@ -60,12 +71,27 @@ ALL_ACTIONS = SETUP_ACTIONS + CREATION_ACTIONS + CONFIGURATION_ACTIONS + EXTENSI
         "- force_camera: Override Brain to use specific camera\n"
         "- release_override: Release camera override\n"
         "- list_cameras: List all cameras with status\n\n"
+        "VISUAL AUDITING (ask before you look — cheapest tier first):\n"
+        "- visibility_report: Zero-pixel visual facts for a camera. Frustum-tests every active "
+        "Renderer and returns each in-frustum object's screen-space rect (as % of frame), approximate "
+        "coverage_pct, and distance — sorted by coverage, paged. Optional check_occlusion does a single "
+        "raycast per object to report an approximate occluder. Answers 'is X on screen / how big / behind "
+        "what' for ~50 tokens with NO image. Prefer this over a screenshot whenever the question is "
+        "geometric.\n"
+        "- screenshot_compare: Capture the current frame and numerically diff it against baseline_path "
+        "(a prior screenshot in the project's screenshot folder or under Assets/). Returns changed_pixel_pct, "
+        "diff_bbox, mean_delta and dimensions — NO image by default (set save_diff=true to also write a "
+        "diff-visualization PNG). Answers 'did my change affect only region Y' for ~50 tokens.\n\n"
         "CAPTURE:\n"
         "- screenshot: Capture a screenshot. By default (no camera specified) uses ScreenCapture API, "
         "which captures all render layers including Screen Space - Overlay UI canvases. "
         "Specifying a camera uses direct camera rendering, which EXCLUDES Screen Space - Overlay canvases "
         "(use only when you need a specific viewpoint without UI). "
-        "Supports include_image=true for inline base64 PNG, "
+        "Supports include_image=true for inline base64. The inline image is right-sized: it defaults to "
+        "max_width=1280 (aspect preserved) so the payload is never a multi-MB image the model downscales "
+        "away — the full-resolution file on disk is unchanged. Tune with max_width, image_format='jpg' "
+        "(+jpg_quality) for smaller payloads, and crop_target (+crop_padding_px) to focus the inline image "
+        "on one object's screen bounds. Also supports "
         "batch='surround' for 6-angle contact sheet, batch='orbit' for configurable grid, "
         "view_target/view_position for positioned capture, and capture_source='scene_view' to capture "
         "the active Unity Scene View viewport.\n"
@@ -99,9 +125,35 @@ async def manage_camera(
         "Specify only when you need a particular camera viewpoint; note that Screen Space - Overlay "
         "canvases will NOT appear in camera-rendered captures."] = None,
     include_image: Annotated[bool | str | None,
-        "If true, return screenshot as inline base64 PNG. Default false."] = None,
+        "If true, return screenshot as inline base64 image. Default false."] = None,
     max_resolution: Annotated[int | str | None,
-        "Max resolution (longest edge px) for inline image. Default 640."] = None,
+        "Max resolution (longest edge px) for batch/contact-sheet tiles. "
+        "For a single image prefer max_width."] = None,
+    max_width: Annotated[int | str | None,
+        "Downscale the INLINE image to this width (aspect preserved) before encoding. "
+        "Defaults to 1280 when include_image is true and no width is given; the disk file is unaffected."] = None,
+    image_format: Annotated[Literal["png", "jpg"] | None,
+        "Inline image encoding: 'png' (default) or 'jpg' (smaller, lossy)."] = None,
+    jpg_quality: Annotated[int | str | None,
+        "JPEG quality 1-100 when image_format='jpg'. Default 80."] = None,
+    crop_target: Annotated[str | None,
+        "GameObject name or hierarchy path. Crops the inline image to that object's "
+        "renderer-bounds screen rect (+ crop_padding_px), clamped to the frame."] = None,
+    crop_padding_px: Annotated[int | str | None,
+        "Padding in pixels around crop_target's screen rect. Default 32."] = None,
+    baseline_path: Annotated[str | None,
+        "screenshot_compare only: path to a prior screenshot to diff against. Must resolve "
+        "inside the project's screenshot folder or under Assets/."] = None,
+    diff_threshold: Annotated[int | str | None,
+        "screenshot_compare only: per-channel delta (0-255) above which a pixel counts as changed. Default 8."] = None,
+    save_diff: Annotated[bool | str | None,
+        "screenshot_compare only: if true, write a diff-visualization PNG and return its path. Default false."] = None,
+    check_occlusion: Annotated[bool | str | None,
+        "visibility_report only: if true, raycast each in-frustum object and report an approximate occluder."] = None,
+    page_size: Annotated[int | str | None,
+        "visibility_report only: max items per page (default 25, capped at 100)."] = None,
+    cursor: Annotated[int | str | None,
+        "visibility_report only: paging offset into the sorted item list."] = None,
     capture_source: Annotated[Literal["game_view", "scene_view"] | None,
         "Screenshot source. 'game_view' (default) captures the game/camera path; "
         "'scene_view' captures the active Unity Scene View viewport."] = None,
@@ -161,7 +213,8 @@ async def manage_camera(
     if search_method is not None:
         params_dict["searchMethod"] = search_method
 
-    # Screenshot params — only relevant for screenshot/screenshot_multiview actions
+    # Screenshot params — relevant for every capture action (screenshot,
+    # screenshot_multiview, screenshot_compare all capture a frame).
     if action_normalized in CAPTURE_ACTIONS:
         err = build_screenshot_params(
             params_dict,
@@ -170,6 +223,11 @@ async def manage_camera(
             camera=camera,
             include_image=include_image,
             max_resolution=max_resolution,
+            max_width=max_width,
+            image_format=image_format,
+            jpg_quality=jpg_quality,
+            crop_target=crop_target,
+            crop_padding_px=crop_padding_px,
             capture_source=capture_source,
             batch=batch,
             view_target=view_target,
@@ -180,6 +238,30 @@ async def manage_camera(
             view_position=view_position,
             view_rotation=view_rotation,
             output_folder=output_folder,
+        )
+        if err is not None:
+            return err
+
+    # Visual-audit params — screenshot_compare needs a baseline + diff knobs;
+    # visibility_report needs camera + paging + occlusion. build_visual_audit_params
+    # only sets the keys it was given, so it is safe to pass the whole bag for both.
+    if action_normalized == "screenshot_compare" or action_normalized in ANALYSIS_ACTIONS:
+        if action_normalized == "screenshot_compare" and not (
+            baseline_path and str(baseline_path).strip()
+        ):
+            return {
+                "success": False,
+                "message": "screenshot_compare requires 'baseline_path' (a prior screenshot to diff against).",
+            }
+        err = build_visual_audit_params(
+            params_dict,
+            camera=camera,
+            baseline_path=baseline_path,
+            diff_threshold=diff_threshold,
+            save_diff=save_diff,
+            check_occlusion=check_occlusion,
+            page_size=page_size,
+            cursor=cursor,
         )
         if err is not None:
             return err

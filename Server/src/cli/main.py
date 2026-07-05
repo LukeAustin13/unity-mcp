@@ -277,7 +277,10 @@ def register_commands():
         ("cli.commands.physics", "physics"),
         ("cli.commands.profiler", "profiler"),
         ("cli.commands.project", "project"),
+        ("cli.commands.query", "query"),
         ("cli.commands.audit", "audit"),
+        ("cli.commands.checkpoint", "checkpoint"),
+        ("cli.commands.playtest", "playtest"),
     ]
 
     for module_name, command_name in optional_commands:

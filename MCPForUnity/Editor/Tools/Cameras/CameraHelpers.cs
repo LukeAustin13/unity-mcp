@@ -154,6 +154,47 @@ namespace MCPForUnity.Editor.Tools.Cameras
             return allCams.Length > 0 ? allCams[0] : null;
         }
 
+        /// <summary>
+        /// Resolves a camera by name, path, or instance ID; falls back to the main camera
+        /// (or the first camera in the scene) when the reference is empty. Returns null only
+        /// when no camera exists at all.
+        /// </summary>
+        internal static UnityEngine.Camera ResolveCameraOrMain(string cameraRef)
+        {
+            if (string.IsNullOrEmpty(cameraRef))
+                return FindMainCamera();
+
+            if (int.TryParse(cameraRef, out int id))
+            {
+                var obj = GameObjectLookup.ResolveInstanceID(id);
+                if (obj is UnityEngine.Camera cam) return cam;
+                if (obj is GameObject go)
+                {
+                    var c = go.GetComponent<UnityEngine.Camera>();
+                    if (c != null) return c;
+                }
+            }
+
+            var allCams = UnityFindObjectsCompat.FindAll<UnityEngine.Camera>();
+            foreach (var cam in allCams)
+            {
+                if (cam.name == cameraRef || cam.gameObject.name == cameraRef)
+                    return cam;
+            }
+
+            if (cameraRef.Contains("/"))
+            {
+                var ids = GameObjectLookup.SearchGameObjects("by_path", cameraRef, includeInactive: false, maxResults: 1);
+                if (ids.Count > 0)
+                {
+                    var go = GameObjectLookup.FindById(ids[0]);
+                    if (go != null) return go.GetComponent<UnityEngine.Camera>();
+                }
+            }
+
+            return null;
+        }
+
         internal static JObject ExtractProperties(JObject @params)
         {
             var props = @params["properties"] as JObject;

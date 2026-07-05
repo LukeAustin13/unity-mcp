@@ -29,7 +29,7 @@ CS_TOOLS_DIR = Path(__file__).resolve().parents[2] / "MCPForUnity" / "Editor" / 
 
 # Tools classified by a payload-aware branch in classify_call rather than a flat
 # TOOL_POLICIES entry.
-SPECIAL_CASE_CLASSIFIERS = {"batch_execute", "manage_build", "manage_scene", "manage_prefabs"}
+SPECIAL_CASE_CLASSIFIERS = {"batch_execute", "manage_build", "manage_scene", "manage_prefabs", "manage_checkpoint", "manage_camera"}
 
 # Infra case labels that need not appear in a tool's Python ALL_ACTIONS.
 _INFRA_ACTIONS = {"ping"}

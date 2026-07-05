@@ -479,8 +479,16 @@ def release_override():
 @click.option("--camera-ref", default=None, help="Camera to capture from (name/path/ID).")
 @click.option("--file-name", default=None, help="Output file name.")
 @click.option("--super-size", type=int, default=None, help="Supersize multiplier.")
-@click.option("--include-image/--no-include-image", default=None, help="Return inline base64 PNG.")
-@click.option("--max-resolution", type=int, default=None, help="Max resolution for inline image.")
+@click.option("--include-image/--no-include-image", default=None, help="Return inline base64 image.")
+@click.option("--max-resolution", type=int, default=None, help="Max longest-edge px for batch/contact-sheet tiles.")
+@click.option("--max-width", type=int, default=None,
+              help="Downscale the inline image to this width (aspect preserved). Defaults to 1280 with --include-image.")
+@click.option("--image-format", default=None, type=click.Choice(["png", "jpg"], case_sensitive=False),
+              help="Inline image encoding: png (default) or jpg.")
+@click.option("--jpg-quality", type=int, default=None, help="JPEG quality 1-100 when --image-format jpg (default 80).")
+@click.option("--crop-target", default=None,
+              help="GameObject name/path; crop inline image to its screen bounds.")
+@click.option("--crop-padding-px", type=int, default=None, help="Padding around --crop-target's screen rect (default 32).")
 @click.option("--capture-source", default=None,
               type=click.Choice(["game_view", "scene_view"], case_sensitive=False),
               help="Capture source: game_view (default) or scene_view.")
@@ -492,13 +500,16 @@ def release_override():
               help="Output folder, project-relative (e.g. 'Assets/Screenshots' or 'Captures') or absolute inside the project. "
                    "Overrides Editor preference; falls back to Assets/Screenshots when unset.")
 @handle_unity_errors
-def screenshot(camera_ref, file_name, super_size, include_image, max_resolution, capture_source, batch, view_target, output_folder):
+def screenshot(camera_ref, file_name, super_size, include_image, max_resolution, max_width,
+               image_format, jpg_quality, crop_target, crop_padding_px,
+               capture_source, batch, view_target, output_folder):
     """Capture a screenshot from a camera.
 
     \b
     Examples:
         unity-mcp camera screenshot
-        unity-mcp camera screenshot --camera-ref "CM FollowCam" --include-image --max-resolution 512
+        unity-mcp camera screenshot --camera-ref "CM FollowCam" --include-image --max-width 1024
+        unity-mcp camera screenshot --include-image --image-format jpg --crop-target HUD/HealthBar
         unity-mcp camera screenshot --capture-source scene_view --view-target Canvas --include-image
         unity-mcp camera screenshot --batch surround --view-target Player
         unity-mcp camera screenshot --output-folder Captures
@@ -515,6 +526,16 @@ def screenshot(camera_ref, file_name, super_size, include_image, max_resolution,
         params["includeImage"] = include_image
     if max_resolution is not None:
         params["maxResolution"] = max_resolution
+    if max_width is not None:
+        params["maxWidth"] = max_width
+    if image_format:
+        params["imageFormat"] = image_format.lower()
+    if jpg_quality is not None:
+        params["jpgQuality"] = jpg_quality
+    if crop_target:
+        params["cropTarget"] = crop_target
+    if crop_padding_px is not None:
+        params["cropPaddingPx"] = crop_padding_px
     if capture_source:
         params["captureSource"] = capture_source
     if batch:
@@ -523,6 +544,68 @@ def screenshot(camera_ref, file_name, super_size, include_image, max_resolution,
         params["viewTarget"] = view_target
     if output_folder:
         params["outputFolder"] = output_folder
+    result = run_command(config, "manage_camera", params)
+    format_output(result, config)
+
+
+@camera.command("compare")
+@click.argument("baseline_path")
+@click.option("--camera-ref", default=None, help="Camera to capture the current frame from (name/path/ID).")
+@click.option("--diff-threshold", type=int, default=None,
+              help="Per-channel delta (0-255) above which a pixel counts as changed. Default 8.")
+@click.option("--save-diff/--no-save-diff", default=None,
+              help="Write a diff-visualization PNG and return its path.")
+@click.option("--output-folder", default=None,
+              help="Screenshot output folder (also scopes the allowed baseline location).")
+@handle_unity_errors
+def compare(baseline_path, camera_ref, diff_threshold, save_diff, output_folder):
+    """Numerically diff the current frame against a prior screenshot (no image by default).
+
+    \b
+    Examples:
+        unity-mcp camera compare Assets/Screenshots/before.png
+        unity-mcp camera compare Assets/Screenshots/before.png --diff-threshold 12 --save-diff
+    """
+    config = get_config()
+    params: dict[str, Any] = {"action": "screenshot_compare", "baselinePath": baseline_path}
+    if camera_ref:
+        params["camera"] = camera_ref
+    if diff_threshold is not None:
+        params["diffThreshold"] = diff_threshold
+    if save_diff is not None:
+        params["saveDiff"] = save_diff
+    if output_folder:
+        params["outputFolder"] = output_folder
+    result = run_command(config, "manage_camera", params)
+    format_output(result, config)
+
+
+@camera.command("visibility")
+@click.option("--camera-ref", default=None, help="Camera to report for (name/path/ID). Defaults to main camera.")
+@click.option("--check-occlusion/--no-check-occlusion", default=None,
+              help="Raycast each in-frustum object and report an approximate occluder.")
+@click.option("--page-size", type=int, default=None, help="Max items per page (default 25, capped at 100).")
+@click.option("--cursor", type=int, default=None, help="Paging offset into the sorted item list.")
+@handle_unity_errors
+def visibility(camera_ref, check_occlusion, page_size, cursor):
+    """Zero-pixel visibility report: which renderers are on-screen, how big, and how far.
+
+    \b
+    Examples:
+        unity-mcp camera visibility
+        unity-mcp camera visibility --camera-ref "CM FollowCam" --check-occlusion
+        unity-mcp camera visibility --page-size 50 --cursor 50
+    """
+    config = get_config()
+    params: dict[str, Any] = {"action": "visibility_report"}
+    if camera_ref:
+        params["camera"] = camera_ref
+    if check_occlusion is not None:
+        params["checkOcclusion"] = check_occlusion
+    if page_size is not None:
+        params["pageSize"] = page_size
+    if cursor is not None:
+        params["cursor"] = cursor
     result = run_command(config, "manage_camera", params)
     format_output(result, config)
 
