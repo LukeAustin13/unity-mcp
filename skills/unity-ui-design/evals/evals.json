@@ -1,0 +1,87 @@
+{
+  "skill_name": "unity-ui-design",
+  "evals": [
+    {
+      "id": 1,
+      "name": "mobile_settings_screen_from_scratch",
+      "prompt": "Build a mobile portrait settings screen for our game. Three tabs (Audio, Graphics, Controls). Audio tab needs sliders for Master, Music, SFX, and a Subtitles toggle. Footer has Reset and Apply buttons. Make it match a clean dark-mode aesthetic. The game uses uGUI.",
+      "expected_output": "A SettingsScreen prefab at Assets/UI/Prefabs/Screens/, built with: split static/dynamic sub-canvases; SafeAreaPanel under root; CanvasScaler set to 1080x1920 with match=1; TMP_Text throughout; design tokens ScriptableObject created if absent; tabs implemented as a TabSwitcher; sliders and toggle as form-field prefabs; footer buttons as variants of a Button_Base prefab; final screenshot verifying layout on portrait reference resolution; console clean of errors.",
+      "files": [],
+      "assertions": [
+        "Created or extended a DesignTokens ScriptableObject before authoring components",
+        "Used TMP_Text exclusively (no legacy UnityEngine.UI.Text component)",
+        "Top-level Canvas has CanvasScaler configured for mobile portrait (1080x1920, match=1)",
+        "Includes a SafeAreaPanel between the Canvas and content",
+        "Static decorative elements and dynamic content are on separate sub-canvases",
+        "Each Button variant is implemented as a prefab variant of a Button_Base, not duplicate prefabs",
+        "RaycastTarget is set to false on decorative Images and TMP_Text labels",
+        "Used batch_execute for multi-element creation rather than serial manage_gameobject calls",
+        "Verified the result with a manage_camera screenshot before declaring done",
+        "read_console returns no errors after final compile"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "audit_existing_main_menu",
+      "prompt": "Audit my MainMenu prefab at Assets/UI/Prefabs/MainMenu.prefab and tell me everything wrong with it from a senior UI engineering perspective. Don't fix anything yet, just give me the report.",
+      "expected_output": "A structured audit report grouped by severity (critical / major / minor). Each finding cites the offending element by path, explains the impact, and offers a one-line fix. Audit covers: legacy Text components, RaycastTarget hygiene, Canvas splitting, Mask vs RectMask2D, nested LayoutGroup chains, Animator on UI, design-token compliance, accessibility (contrast, touch target sizes), state coverage (default/hover/pressed/disabled), safe-area handling on mobile. No modifications made to the prefab.",
+      "files": ["Assets/UI/Prefabs/MainMenu.prefab"],
+      "assertions": [
+        "Read the prefab via find_gameobjects / manage_prefabs before reporting",
+        "Took a baseline screenshot of the prefab in a test scene",
+        "Report is structured by severity, not a flat list",
+        "Each finding includes the offending GameObject path and a concrete one-line fix",
+        "Did not modify the prefab during the audit",
+        "Covered at least 8 of: legacy Text, raycast hygiene, canvas splitting, Mask vs RectMask2D, nested LayoutGroups, Animator on UI, tokens, contrast, touch targets, state coverage, safe area"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "restyle_buttons_with_tokens",
+      "prompt": "Restyle every button in the project to use rounded corners (12px radius) and the primary color from my design tokens. I currently have buttons styled with inline hex colors and sharp corners.",
+      "expected_output": "All Button prefab variants updated to: derive colour from DesignTokens via UIThemeApplier (no inline hex remaining); use a sliced sprite with 12px corner radius for the background; press-feedback intact. Variants updated in-place rather than duplicated. Final visual verification via screenshot of at least one button in a representative screen.",
+      "files": [],
+      "assertions": [
+        "Located all button prefabs via find_gameobjects or manage_asset search before modifying",
+        "Updated Button_Base and let variants inherit, rather than modifying each variant",
+        "Replaced inline hex colour values with UIThemeApplier referencing DesignTokens",
+        "Used a sliced sprite (rounded-corner 9-slice) for the background image",
+        "Did not break existing press-feedback or onClick wiring",
+        "Verified visually with at least one screenshot post-change"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "desktop_hud_with_minimap",
+      "prompt": "Build a desktop HUD for a top-down shooter. Health bar bottom-left, ammo counter bottom-right, score top-center, minimap top-right (~200x200), objective marker that can point off-screen toward the current objective. Performance matters — this updates every frame.",
+      "expected_output": "An HUD prefab with proper Canvas splitting: a StaticCanvas for decorative frames and a DynamicCanvas for the changing values (health fill, ammo number, score, minimap blips). Health uses a Filled Image. Ammo and score TMP_Text update via SetText(StringBuilder) to avoid GC alloc. Objective marker uses a screen-space anchored Image with off-screen clamping logic. Each HUD element corner-anchored to the appropriate corner. RaycastTarget disabled on every non-interactive element. Final screenshot verifies layout at 1920x1080.",
+      "files": [],
+      "assertions": [
+        "Used at least two sub-canvases (static vs dynamic split)",
+        "Health bar uses Image type=Filled with horizontal fill method",
+        "TMP_Text updates use SetText overload or change-detection to avoid per-frame string allocation",
+        "Each HUD element is anchored to its natural corner (not centered with offsets)",
+        "RaycastTarget = false on every Image and TMP_Text in the HUD (none are interactive)",
+        "Objective marker has off-screen clamping logic to keep arrow visible at screen edge",
+        "Configured CanvasScaler for 1920x1080 reference with match=0 (width-priority for landscape)",
+        "Final screenshot taken at the reference resolution"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "convert_ugui_screen_to_ui_toolkit",
+      "prompt": "Convert my existing uGUI PauseMenu (Assets/UI/Prefabs/PauseMenu.prefab) to UI Toolkit. Same visual design, same buttons (Resume, Settings, Main Menu, Quit), same scrim-blocking behavior, same input wiring.",
+      "expected_output": "A new PauseMenu.uxml + matching component USS, a PanelSettings asset if one doesn't already exist, a UIDocument-mounted scene GameObject, and a controller C# script that wires Resume/Settings/MainMenu/Quit and handles Time.timeScale and Escape-to-close. Scrim implemented as a VisualElement with picking-mode=Position to block clicks-through. Auto-focus on Resume button for keyboard nav. Visual parity verified against the original uGUI screenshot.",
+      "files": ["Assets/UI/Prefabs/PauseMenu.prefab"],
+      "assertions": [
+        "Inspected the original uGUI prefab before converting (took a baseline screenshot)",
+        "Created tokens.uss + a component-level USS, not inline styles in UXML",
+        "PauseMenu.uxml structure uses kebab-case element names and BEM-style class names",
+        "Scrim uses pickingMode=Position to absorb clicks",
+        "Controller correctly handles Time.timeScale (0 on open, restore on close)",
+        "Controller wires Escape/Cancel input to close, and auto-focuses Resume for keyboard nav",
+        "Final screenshot verifies visual parity with the uGUI baseline"
+      ]
+    }
+  ]
+}

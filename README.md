@@ -101,6 +101,10 @@ Unlike upstream, this fork ships with **telemetry disabled by default** — no u
 
 Beyond guardrails, the fork adds inspection tools that work even in `read_only` mode: project/prefab health scans, dependency X-ray, fast scene queries, mobile and UI-layout audits, scene contracts (declare in JSON what a scene must and must not contain, then validate), zero-pixel visual audits, and one-call play smoke tests. The full list with CLI equivalents lives in [`CHANGELOG.fork.md`](CHANGELOG.fork.md).
 
+### Drop-in agent skills
+
+The [`skills/`](skills/README.md) folder holds portable skills you can copy into any project that uses this MCP (`your-game/.claude/skills/`). They teach an agent the *operating discipline* — check the safety posture before acting, prefer structured facts over screenshots, page instead of flooding, verify every change before claiming success — plus focused workflows for project diagnosis, scene contracts, UI audits, test triage, and checkpoint-based safe iteration.
+
 ### Intended use
 
 For developers who want AI-assisted Unity workflows they can trust on projects that matter. Run `review_only` when you want inspection and test-running without edit risk; run `write` for hands-on development with an acknowledgement gate and an audit trail on the operations that can lose work.
