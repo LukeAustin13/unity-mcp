@@ -1029,7 +1029,14 @@ namespace MCPForUnity.Editor.Tools
                     audit.Add("audio_decompress_on_load", path);
 
                 // "Large" heuristic by file size on disk; avoids loading the clip.
-                if (ai.preloadAudioData && IsLargeFile(path, 1_000_000))
+                // Preload moved to per-platform sample settings in 2022.2; the old
+                // AudioImporter.preloadAudioData is CS0619 in 6000.4+.
+#if UNITY_2022_2_OR_NEWER
+                bool preload = s.preloadAudioData;
+#else
+                bool preload = ai.preloadAudioData;
+#endif
+                if (preload && IsLargeFile(path, 1_000_000))
                     audit.Add("audio_preload_large", path);
             }
             catch (Exception ex)

@@ -374,11 +374,12 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PrefabHealth_FindingsHaveRequiredShape()
         {
-            // Build a prefab with a duplicate MeshFilter — a duplicate-component
+            // Build a prefab with a duplicate AudioSource — a duplicate-component
             // finding that is not in the "duplicates allowed" collider set.
+            // (MeshFilter is unsuitable: Unity 6000.4+ rejects adding a second one.)
             var go = new GameObject("Dupes");
-            go.AddComponent<MeshFilter>();
-            go.AddComponent<MeshFilter>();
+            go.AddComponent<AudioSource>();
+            go.AddComponent<AudioSource>();
             string path = $"{_root}/Dupes.prefab";
             PrefabUtility.SaveAsPrefabAsset(go, path);
             UnityEngine.Object.DestroyImmediate(go);

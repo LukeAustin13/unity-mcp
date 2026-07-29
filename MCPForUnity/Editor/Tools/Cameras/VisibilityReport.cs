@@ -156,7 +156,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (dist <= Mathf.Epsilon) return null;
             dir /= dist;
 
-            var hits = Physics.RaycastAll(origin, dir, dist);
+            var hits = global::UnityEngine.Physics.RaycastAll(origin, dir, dist);
             if (hits == null || hits.Length == 0) return null;
             Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
             foreach (var hit in hits)
