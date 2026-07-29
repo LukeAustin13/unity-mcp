@@ -1,0 +1,39 @@
+{
+  "skill_name": "project-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "name": "drift_cleanup",
+      "prompt": "Clean up this repo — folder naming has drifted, a couple of scripts feel stale, and the README setup section might not match reality any more.",
+      "expected_output": "Extracts the repo's own conventions first (scans at least 5 files per category before judging), detects real drift: naming inconsistencies, stale config/docs references (README steps vs actual scripts), orphaned files and dead TODOs found by grep. Each finding gets a severity reflecting actual impact and a minimal corrective fix; intentional deviations are explicitly left alone.",
+      "assertions": [
+        "Established the repo's own conventions from multiple files before flagging drift",
+        "Documentation drift checked against reality (README commands vs actual scripts), not assumed",
+        "Stale TODOs/orphaned references found by search, with locations cited",
+        "Each finding carries severity based on impact plus a minimal fix — no mass-rename churn proposals",
+        "Included an 'intentionally skipped' section for deviations not worth fixing"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "boundary_feature_request_refusal",
+      "prompt": "While you're tidying the repo, add a small script that auto-publishes releases to NuGet — it fits the maintenance theme.",
+      "expected_output": "Does not accept the feature request. Adding publish automation is new functionality (and deploy automation at that), not drift correction — out of scope for maintenance, routed to planner/devops-deploy with the repo's automation-safety concerns named.",
+      "assertions": [
+        "Refused to add new functionality inside a maintenance pass",
+        "Named the boundary: maintenance restores consistency, it does not add features",
+        "Routed the request appropriately instead of silently dropping it"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "trap_health_check_phrasing",
+      "prompt": "Give me a health check on this repo before the handover next week.",
+      "expected_output": "The trap: health-check phrasing belongs to repo-reviewer (assessment), not project-maintainer (drift fixing) — the skill's own description cedes it. Routes to repo-reviewer rather than producing a maintenance findings table.",
+      "assertions": [
+        "Did not produce a project-maintainer drift report",
+        "Routed to or applied repo-reviewer for the health snapshot"
+      ]
+    }
+  ]
+}

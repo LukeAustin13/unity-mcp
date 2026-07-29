@@ -1,0 +1,53 @@
+{
+  "skill_name": "bug-hunter",
+  "evals": [
+    {
+      "id": 1,
+      "name": "casual_null_ref_report",
+      "prompt": "getting a NullReferenceException when I save a draft order with no line items, stack trace points at OrderTotalsCalculator.Recalculate. can you figure out what's going on",
+      "expected_output": "Hypothesis-driven diagnosis: reads the stack trace and calculator code plus its callers, forms 2+ falsifiable hypotheses ranked by likelihood, tests them with evidence, traces the null to where it originated (not just the throw site), proposes a root-cause fix with defense at the layers the bad value crosses, and names a regression test.",
+      "assertions": [
+        "Formed at least two falsifiable hypotheses before settling on a cause",
+        "Traced the null back to its origin rather than patching the throw site",
+        "Evidence cited with specific file:line or trace excerpts",
+        "Fix addresses root cause, with entry-point AND consumption-site defense (defense in depth)",
+        "Named or wrote a regression test that fails without the fix",
+        "Did not wrap the failure in a try/catch to suppress the symptom"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "intermittent_failure_no_shotgunning",
+      "prompt": "this test fails maybe 1 in 5 runs in CI but never locally, I've already tried adding a sleep and it didn't help. InventorySyncTests.Concurrent_updates_preserve_count",
+      "expected_output": "Treats intermittence as a race/ordering/state signal, does not add more sleeps or retry loops, characterises the nondeterminism (shared state, timing, ordering), and produces an evidence-backed diagnosis — or an honest 'cannot reproduce yet' with the specific instrumentation needed. Routes the deterministic fix pattern via flaky-test-stabiliser if appropriate.",
+      "assertions": [
+        "Did not propose adding sleeps, retries, or test re-runs as the fix",
+        "Identified the nondeterminism class (race/ordering/shared state/timing) with evidence from the test and code",
+        "If unable to reproduce, said so explicitly and named what instrumentation or information would unlock it",
+        "Rejected the 'works on retry so it is fine' rationalization"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "stops_after_failed_fixes",
+      "prompt": "third fix attempt for this date-off-by-one in the billing cycle and it STILL fails for customers in UTC+13. previous attempts: clamped to month end, switched AddMonths to manual math, forced UTC everywhere",
+      "expected_output": "Recognises the three-failed-fixes signal and stops shotgunning: re-derives from evidence, questions the premise (where the symptom actually originates, whether the reproduction is testing the right thing), picks a concrete failing input (a UTC+13 boundary date) and hand-traces it before proposing any fourth change.",
+      "assertions": [
+        "Explicitly stopped proposing variations and questioned the underlying assumptions instead",
+        "Hand-traced a concrete failing input (UTC+13 boundary case) through the actual code",
+        "Identified which premise the three failed fixes shared and tested it",
+        "Any new fix proposal came only after the re-derived diagnosis"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "should_not_trigger_quality_review",
+      "prompt": "this OrderService class works fine but it's gotten pretty gnarly, can you look it over and tell me what you'd improve",
+      "expected_output": "Does NOT run a bug diagnosis. Working code needing quality assessment routes to code-reviewer (or principles-reviewer for structural concerns).",
+      "assertions": [
+        "Did not produce a bug diagnosis or hypothesis table",
+        "Routed to or applied code-reviewer / principles-reviewer"
+      ]
+    }
+  ]
+}

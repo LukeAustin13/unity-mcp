@@ -1,0 +1,39 @@
+{
+  "skill_name": "prompt-hardener",
+  "evals": [
+    {
+      "id": 1,
+      "name": "vague_cleanup_ask",
+      "prompt": "Write a prompt I can give an agent to clean up the auth code in this repo.",
+      "expected_output": "A hardened brief with real scope (actual auth-related files found by inspection), explicit out-of-scope, deliverable shape, constraints from the repo's conventions, stop conditions including a halt-and-report case, and a verification command. Assumptions listed; questions only for what the repo cannot answer.",
+      "assertions": [
+        "Inspected the repo to name real files/directories in scope, not placeholders",
+        "Converted 'clean up' into checkable instructions (what changes, what must not change)",
+        "Included at least one halt-and-report stop condition",
+        "Named a runnable verification command with required evidence",
+        "Listed assumptions separately so they can be vetoed",
+        "Did not execute the cleanup itself"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "should_not_trigger_clear_task",
+      "prompt": "Rename the variable `tmp` to `retryCount` in OrderService.cs and run the tests.",
+      "expected_output": "Does NOT produce a hardened brief. The ask is already specific — the correct behaviour is to just do it (or route to the executing skill).",
+      "assertions": [
+        "Did not produce a prompt-shaped deliverable",
+        "Either performed the task or routed to the appropriate implementation flow"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "should_not_trigger_scope_decision",
+      "prompt": "I'm not sure if we should build the export feature as CSV or a full reporting module. Help me write the task up.",
+      "expected_output": "Recognises the gap is a design/scope decision, not prompt wording — routes to design-brainstorming (approach undecided) rather than hardening a brief around an unmade decision.",
+      "assertions": [
+        "Did not bake an unmade scope decision into a hardened brief",
+        "Routed to or applied design-brainstorming / product-planner for the decision first"
+      ]
+    }
+  ]
+}
